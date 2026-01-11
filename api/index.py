@@ -410,111 +410,101 @@ def analyze_timeframe(tf, df, data_store):
 
 # --- DATA FETCHING ---
 
+def fetch_ticker_data(ticker, period, interval):
+    """Helper to fetch single ticker data with short timeout."""
+    try:
+        return yf.download(ticker, period=period, interval=interval, progress=False, timeout=5)
+    except:
+        return None
+
 def fetch_all_timeframes():
-    """Fetches and prepares data for Gold, DXY, Oil, and Yields for all timeframes."""
+    """Fetches and prepares data for Gold, DXY, Oil, and Yields using ThreadPoolExecutor."""
     data_store = {}
     gold_tickers = ["GC=F", "XAUUSD=X"]
-    dxy_tickers = ["DX-Y.NYB", "^DXY"]
-    oil_tickers = ["CL=F"]
-    yield_tickers = ["^TNX"]
-    
-    # --- FETCH GOLD ---
-    for ticker in gold_tickers:
-        print(f"DEBUG: Attempting to fetch Gold data from {ticker}...")
-        try:
-            df_intra = yf.download(ticker, period="5d", interval="1m", progress=False, timeout=20)
-            df_hourly = yf.download(ticker, period="60d", interval="1h", progress=False, timeout=20)
-            df_daily = yf.download(ticker, period="2y", interval="1d", progress=False, timeout=20)
-            df_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False, timeout=20)
+    dxy_ticker = "DX-Y.NYB"
+    oil_ticker = "CL=F"
+    yield_ticker = "^TNX"
 
-            def validate_df(df, tick):
-                if df is None or df.empty: return False
-                if isinstance(df.columns, pd.MultiIndex):
-                    try: df = df.xs(tick, level=0, axis=1)
-                    except: 
-                        try: df = df.xs(tick, level=1, axis=1)
-                        except: return False
-                
-                col_map = {c.lower(): c for c in df.columns}
-                if 'close' not in col_map and 'adj close' in col_map:
-                    df['Close'] = df[col_map['adj close']]
-                elif 'close' not in col_map:
-                    return False
-                
-                if df['Close'].isnull().all(): return False
-                    
-                df = df.dropna(subset=['Close'])
-                return df if len(df) > 10 else False
+    import concurrent.futures
 
-            # Validate Main Data source
-            valid_hourly = validate_df(df_hourly, ticker)
-            
-            if valid_hourly is not False:
-                # Process All
-                data_store['1h'] = valid_hourly
-                data_store['1d'] = validate_df(df_daily, ticker)
-                data_store['1wk'] = validate_df(df_weekly, ticker)
-                
-                # Resampling
-                valid_intra = validate_df(df_intra, ticker)
-                if valid_intra is not False:
-                    logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-                    if 'Volume' not in valid_intra.columns: valid_intra['Volume'] = 0
-                    
-                    data_store['1m'] = valid_intra
-                    data_store['5m'] = valid_intra.resample('5min').agg(logic).dropna()
-                    data_store['15m'] = valid_intra.resample('15min').agg(logic).dropna()
-                else:
-                    data_store['5m'] = validate_df(yf.download(ticker, period="5d", interval="5m", progress=False), ticker)
-                    data_store['15m'] = validate_df(yf.download(ticker, period="5d", interval="15m", progress=False), ticker)
-                
-                logic_h = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-                if 'Volume' not in valid_hourly.columns: valid_hourly['Volume'] = 0
-                
-                data_store['2h'] = valid_hourly.resample('2h').agg(logic_h).dropna()
-                data_store['4h'] = valid_hourly.resample('4h').agg(logic_h).dropna()
-                
-                break 
-        except Exception as e:
-            print(f"DEBUG: Gold fetch failed for {ticker}: {e}")
-            continue
+    # Define tasks
+    tasks = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # 1. Gold Tasks (Priority) - Try primary ticker first
+        # We fetch different intervals for Gold
+        tasks['gold_intra'] = executor.submit(fetch_ticker_data, gold_tickers[0], "5d", "1m")
+        tasks['gold_hourly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "60d", "1h")
+        tasks['gold_daily'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2y", "1d")
+        tasks['gold_weekly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2y", "1wk")
+        
+        # 2. Context Tasks
+        tasks['dxy'] = executor.submit(fetch_ticker_data, dxy_ticker, "60d", "1h")
+        tasks['oil'] = executor.submit(fetch_ticker_data, oil_ticker, "60d", "1h")
+        tasks['yield'] = executor.submit(fetch_ticker_data, yield_ticker, "60d", "1h")
+        
+        # Collect Results
+        # Gold Processing
+        df_intra = tasks['gold_intra'].result()
+        df_hourly = tasks['gold_hourly'].result()
+        df_daily = tasks['gold_daily'].result()
+        df_weekly = tasks['gold_weekly'].result()
+        
+        # Fallback to secondary ticker if primary empty
+        if df_hourly is None or df_hourly.empty:
+            df_hourly = fetch_ticker_data(gold_tickers[1], "60d", "1h")
+            # If changed ticker, try others too (simplified for speed: just get hourly as base or context)
+            if df_hourly is not None and not df_hourly.empty:
+                 # Minimal fallback: use this for everything possible
+                 df_intra = fetch_ticker_data(gold_tickers[1], "5d", "5m") # 5m is safer fallback
+                 df_daily = fetch_ticker_data(gold_tickers[1], "2y", "1d")
 
-    # --- FETCH DXY ---
-    for ticker in dxy_tickers:
-        try:
-             dxy_df = yf.download(ticker, period="60d", interval="1h", progress=False)
-             if dxy_df is None or dxy_df.empty: continue
-             if isinstance(dxy_df.columns, pd.MultiIndex):
-                 try: dxy_df = dxy_df.xs(ticker, level=0, axis=1)
-                 except: continue
-             data_store['dxy_1h'] = dxy_df
-             break
-        except: continue
+        def validate_df(df):
+            if df is None or df.empty: return False
+            # Handle MultiIndex logic
+            if isinstance(df.columns, pd.MultiIndex):
+                # Try to flatten or select
+                try: df.columns = df.columns.get_level_values(0)
+                except: pass
+                
+            # Check for Close
+            if 'Close' not in df.columns:
+                 # Maybe it's 'Adj Close'
+                 if 'Adj Close' in df.columns: df['Close'] = df['Adj Close']
+                 else: return False
+                 
+            # Drop NaN
+            df = df.dropna(subset=['Close'])
+            return df if len(df) > 10 else False
 
-    # --- FETCH OIL ---
-    for ticker in oil_tickers:
-        try:
-             oil_df = yf.download(ticker, period="60d", interval="1h", progress=False)
-             if oil_df is None or oil_df.empty: continue
-             if isinstance(oil_df.columns, pd.MultiIndex):
-                 try: oil_df = oil_df.xs(ticker, level=0, axis=1)
-                 except: continue
-             data_store['oil_1h'] = oil_df
-             break
-        except: continue
+        # Store Gold
+        valid_hourly = validate_df(df_hourly)
+        if valid_hourly is not False:
+             data_store['1h'] = valid_hourly
+             data_store['2h'] = valid_hourly.resample('2h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+             data_store['4h'] = valid_hourly.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+        
+        valid_daily = validate_df(df_daily)
+        if valid_daily is not False: data_store['1d'] = valid_daily
+        
+        valid_weekly = validate_df(df_weekly)
+        if valid_weekly is not False: data_store['1wk'] = valid_weekly
+        
+        valid_intra = validate_df(df_intra)
+        if valid_intra is not False:
+             data_store['1m'] = valid_intra
+             data_store['5m'] = valid_intra.resample('5min').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+             data_store['15m'] = valid_intra.resample('15min').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
 
-    # --- FETCH YIELDS (US10Y) ---
-    for ticker in yield_tickers:
-        try:
-             yield_df = yf.download(ticker, period="60d", interval="1h", progress=False)
-             if yield_df is None or yield_df.empty: continue
-             if isinstance(yield_df.columns, pd.MultiIndex):
-                 try: yield_df = yield_df.xs(ticker, level=0, axis=1)
-                 except: continue
-             data_store['yield_1h'] = yield_df
-             break
-        except: continue
-             
+        # Store Context
+        dxy = validate_df(tasks['dxy'].result())
+        if dxy is not False: data_store['dxy_1h'] = dxy
+        
+        oil = validate_df(tasks['oil'].result())
+        if oil is not False: data_store['oil_1h'] = oil
+        
+        yld = validate_df(tasks['yield'].result())
+        if yld is not False: data_store['yield_1h'] = yld
+
     return data_store
 
 @app.route('/api/dashboard', methods=['GET'])
@@ -535,7 +525,7 @@ def dashboard():
         session, _ = get_session_profile_dubai()
         
         return jsonify({
-            "timestamp": datetime.now().strftime("%H:%M:%S UTC"),
+            "timestamp": datetime.utcnow().strftime("%H:%M:%S UTC"),
             "session": session,
             "signals": results
         })
