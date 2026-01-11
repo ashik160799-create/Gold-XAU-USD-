@@ -149,7 +149,7 @@ def detect_wick_anomaly(df):
 
 def analyze_timeframe(tf, df, data_store):
     """
-    Level-9 Analysis Engine.
+    Level-9+ Power AI Analysis Engine.
     """
     if df is None or df.empty or len(df) < 50:
          return {
@@ -161,7 +161,8 @@ def analyze_timeframe(tf, df, data_store):
              "raw_signal": "signal-wait",
              "trade_guide": {"entry": "-", "sl": "-", "tp": "-"},
              "score": 0,
-             "description": "Fetching market data..."
+             "description": "Fetching market data...",
+             "next_candle": "WAIT"
          }
 
     # Run Indicators
@@ -169,120 +170,118 @@ def analyze_timeframe(tf, df, data_store):
     last = df.iloc[-1]
     atr = last['ATR'] if not pd.isna(last['ATR']) else 0
     
-    # DXY Context
+    # External Context
     dxy_df = data_store.get('dxy_1h')
+    yield_df = data_store.get('yield_1h')
     
     score = 0
     reasons = []
     
-    # 1. MULTI-LAYER TREND
-    bull_layers = 0
-    bear_layers = 0
-    
-    # L1: Short
-    if last['EMA5'] > last['EMA20']: bull_layers += 1
-    elif last['EMA5'] < last['EMA20']: bear_layers += 1
-    
-    # L2: Medium
-    if last['EMA20'] > last['EMA50']: bull_layers += 1
-    elif last['EMA20'] < last['EMA50']: bear_layers += 1
-    
-    # L3: Long
-    if not pd.isna(last['EMA200']):
-        if last['EMA50'] > last['EMA200']: bull_layers += 1
-        elif last['EMA50'] < last['EMA200']: bear_layers += 1
+    # 1. TREND DETECTION (EMA 20 vs 50)
+    trend = "SIDEWAYS"
+    if last['EMA20'] > last['EMA50']:
+        trend = "UPTREND"
+        score += 30
+        reasons.append("EMA 20>50 (Uptrend)")
+    elif last['EMA20'] < last['EMA50']:
+        trend = "DOWNTREND"
+        score -= 30
+        reasons.append("EMA 20<50 (Downtrend)")
+    else:
+        reasons.append("EMA Mixed (Sideways)")
 
-    if bull_layers == 3: score += 40; reasons.append("Full Bull Trend")
-    elif bear_layers == 3: score -= 40; reasons.append("Full Bear Trend")
-    elif bull_layers >= 2: score += 20; reasons.append("Bull Bias")
-    elif bear_layers >= 2: score -= 20; reasons.append("Bear Bias")
-    else: reasons.append("Trend Mixed")
-    
-    # 2. MOMENTUM TRIO (RSI, Stoch, MACD)
-    mom_bull = 0
-    mom_bear = 0
-    
-    # RSI
-    if last['RSI'] > 55: mom_bull += 1
-    elif last['RSI'] < 45: mom_bear += 1
-    
-    # Stoch
-    if not pd.isna(last['Stoch_K']):
-        if last['Stoch_K'] > last['Stoch_D'] and last['Stoch_K'] < 80: mom_bull += 1
-        elif last['Stoch_K'] < last['Stoch_D'] and last['Stoch_K'] > 20: mom_bear += 1
-    
-    # MACD
-    if last['MACD'] > last['Signal_Line']: mom_bull += 1
-    else: mom_bear += 1
-    
-    if mom_bull >= 2: score += 25; reasons.append("Mom Strong (+)")
-    elif mom_bear >= 2: score -= 25; reasons.append("Mom Strong (-)")
-    
-    # 3. HTF CONFIRMATION
-    htf_trend = get_htf_trend(data_store, tf)
-    if score > 0 and htf_trend == "BULLISH": score += 15
-    elif score < 0 and htf_trend == "BEARISH": score -= 15
-    elif score > 0 and htf_trend == "BEARISH": score -= 15; reasons.append("HTF Conflict")
-    elif score < 0 and htf_trend == "BULLISH": score += 15; reasons.append("HTF Conflict")
+    # 2. MOMENTUM CONFIRMATION (RSI)
+    if last['RSI'] > 55:
+        score += 25
+        reasons.append("RSI > 55 (Bullish)")
+    elif last['RSI'] < 45:
+        score -= 25
+        reasons.append("RSI < 45 (Bearish)")
 
-    # 4. VOLATILITY & STOP HUNT
-    is_wick, wick_type = detect_wick_anomaly(df)
-    if is_wick:
-        reasons.append(f"⚠️ {wick_type}")
-        if "BULLISH" in wick_type: score += 15 # Reversal Buy
-        if "BEARISH" in wick_type: score -= 15 # Reversal Sell
-    
-    # Check for Massive ATR Spike (News proxy) - Wait
+    # 3. ACCELERATION LOGIC (Delta of Delta)
+    if not pd.isna(last['DeltaDelta']):
+        if trend == "UPTREND" and last['DeltaDelta'] > 0:
+            score += 15
+            reasons.append("Trend Accelerating (+)")
+        elif trend == "DOWNTREND" and last['DeltaDelta'] < 0:
+            score -= 15
+            reasons.append("Trend Accelerating (-)")
+
+    # 4. VOLATILITY CHECK (ATR Spike)
     body = abs(last['Close'] - last['Open'])
     if body > 3 * atr and atr > 0:
         score = 0 # Force Wait
-        reasons.append("Extreme Volatility (News?)")
+        reasons.append("ATR Spike (Volatility Trap)")
 
-    # 5. DXY CORRELATION
+    # 5. STOP-HUNT DETECTION
+    is_wick, wick_type = detect_wick_anomaly(df)
+    if is_wick:
+        reasons.append(f"Stop-Hunt: {wick_type}")
+        if "BULLISH" in wick_type: score += 10
+        if "BEARISH" in wick_type: score -= 10
+    
+    # 6. CORRELATION CHECKS (DXY, US10Y)
+    correlation_risk = False
     if dxy_df is not None:
         dxy_last = dxy_df.iloc[-1]
         dxy_up = dxy_last['Close'] > dxy_last['Open']
         gold_up = last['Close'] > last['Open']
-        if dxy_up and gold_up:
-            score *= 0.7 # Reduce confidence
+        if dxy_up == gold_up: # Gold & DXY should move opposite
+            correlation_risk = True
             reasons.append("DXY Correlation Risk")
-        elif not dxy_up and not gold_up:
-            score *= 0.7
-            reasons.append("DXY Correlation Risk")
+
+    if yield_df is not None:
+        y_last = yield_df.iloc[-1]
+        y_up = y_last['Close'] > y_last['Open']
+        if y_up == gold_up: # Yields & Gold usually move opposite
+            correlation_risk = True
+            reasons.append("Yield Correlation Risk")
+
+    if oil_df is not None:
+        o_last = oil_df.iloc[-1]
+        o_up = o_last['Close'] > o_last['Open']
+        if o_up != gold_up: # Gold & Oil often move together
+            # Minor risk, don't set correlation_risk=True alone, but add reason
+            reasons.append("Oil Divergence")
+            score *= 0.9
+
+    if correlation_risk:
+        score *= 0.6 # Reduce confidence significantly
+
+    # 7. HTF CONFIRMATION
+    htf_trend = get_htf_trend(data_store, tf)
+    if score > 0 and htf_trend == "BULLISH": score += 10
+    elif score < 0 and htf_trend == "BEARISH": score -= 10
+    elif score != 0 and htf_trend == "NEUTRAL": score *= 0.8
+    elif (score > 0 and htf_trend == "BEARISH") or (score < 0 and htf_trend == "BULLISH"):
+        score *= 0.5
+        reasons.append("HTF Conflict")
 
     # --- FINAL DECISION ---
-    action = "WAIT"
-    confidence = 50
-    display_score = 50 + (score / 1.6) # Scale
+    display_score = 50 + (score / 1.5)
     display_score = max(0, min(100, int(display_score)))
     
+    action = "WAIT"
     if display_score >= 65: action = "BUY"
     elif display_score <= 35: action = "SELL"
-    else: action = "WAIT"
+    
+    # Prediction for upcoming candle
+    next_candle = "WAIT"
+    if action == "BUY" and display_score > 70: next_candle = "BUY"
+    elif action == "SELL" and display_score < 30: next_candle = "SELL"
+    elif action != "WAIT": next_candle = action
 
     # Trade Guidance
-    if atr > 0:
+    trade_guide = {"entry": "-", "sl": "-", "tp": "-"}
+    if action != "WAIT" and atr > 0:
         current_price = last['Close']
-        sl = 0
-        tp = 0
         if action == "BUY":
             sl = current_price - (1.5 * atr)
             tp = current_price + (2.0 * atr)
-        elif action == "SELL":
+        else:
             sl = current_price + (1.5 * atr)
             tp = current_price - (2.0 * atr)
-            
-        trade_guide = {
-            "entry": f"{current_price:.2f}",
-            "sl": f"{sl:.2f}",
-            "tp": f"{tp:.2f}"
-        }
-    else:
-        trade_guide = {"entry": "-", "sl": "-", "tp": "-"}
-        
-    # Wait Logic Override
-    if action == "WAIT":
-         trade_guide = {"entry": "-", "sl": "-", "tp": "-"}
+        trade_guide = {"entry": f"{current_price:.2f}", "sl": f"{sl:.2f}", "tp": f"{tp:.2f}"}
 
     final_reason = ", ".join(reasons)
 
@@ -295,16 +294,19 @@ def analyze_timeframe(tf, df, data_store):
         "signal": action,
         "description": final_reason,
         "trade_guide": trade_guide,
-        "raw_signal": "signal-buy" if action == "BUY" else "signal-sell" if action == "SELL" else "signal-wait"
+        "raw_signal": f"signal-{action.lower()}",
+        "next_candle": next_candle
     }
 
 # --- DATA FETCHING ---
 
 def fetch_all_timeframes():
-    """Fetches and prepares data for Gold and DXY for all timeframes."""
+    """Fetches and prepares data for Gold, DXY, Oil, and Yields for all timeframes."""
     data_store = {}
     gold_tickers = ["GC=F", "XAUUSD=X"]
     dxy_tickers = ["DX-Y.NYB", "^DXY"]
+    oil_tickers = ["CL=F"]
+    yield_tickers = ["^TNX"]
     
     # --- FETCH GOLD ---
     for ticker in gold_tickers:
@@ -315,12 +317,12 @@ def fetch_all_timeframes():
             df_daily = yf.download(ticker, period="2y", interval="1d", progress=False, timeout=20)
             df_weekly = yf.download(ticker, period="2y", interval="1wk", progress=False, timeout=20)
 
-            def validate_df(df):
+            def validate_df(df, tick):
                 if df is None or df.empty: return False
                 if isinstance(df.columns, pd.MultiIndex):
-                    try: df = df.xs(ticker, level=0, axis=1)
+                    try: df = df.xs(tick, level=0, axis=1)
                     except: 
-                        try: df = df.xs(ticker, level=1, axis=1)
+                        try: df = df.xs(tick, level=1, axis=1)
                         except: return False
                 
                 col_map = {c.lower(): c for c in df.columns}
@@ -329,37 +331,33 @@ def fetch_all_timeframes():
                 elif 'close' not in col_map:
                     return False
                 
-                # Check for NaNs in Close
                 if df['Close'].isnull().all(): return False
                     
                 df = df.dropna(subset=['Close'])
                 return df if len(df) > 10 else False
 
             # Validate Main Data source
-            valid_hourly = validate_df(df_hourly)
+            valid_hourly = validate_df(df_hourly, ticker)
             
             if valid_hourly is not False:
                 # Process All
                 data_store['1h'] = valid_hourly
-                data_store['1d'] = validate_df(df_daily)
-                data_store['1wk'] = validate_df(df_weekly)
+                data_store['1d'] = validate_df(df_daily, ticker)
+                data_store['1wk'] = validate_df(df_weekly, ticker)
                 
                 # Resampling
-                valid_intra = validate_df(df_intra)
+                valid_intra = validate_df(df_intra, ticker)
                 if valid_intra is not False:
                     logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-                    # Fix: Ensure Volume exists
                     if 'Volume' not in valid_intra.columns: valid_intra['Volume'] = 0
                     
                     data_store['1m'] = valid_intra
                     data_store['5m'] = valid_intra.resample('5min').agg(logic).dropna()
                     data_store['15m'] = valid_intra.resample('15min').agg(logic).dropna()
                 else:
-                    # Fallback
-                    data_store['5m'] = validate_df(yf.download(ticker, period="5d", interval="5m", progress=False))
-                    data_store['15m'] = validate_df(yf.download(ticker, period="5d", interval="15m", progress=False))
+                    data_store['5m'] = validate_df(yf.download(ticker, period="5d", interval="5m", progress=False), ticker)
+                    data_store['15m'] = validate_df(yf.download(ticker, period="5d", interval="15m", progress=False), ticker)
                 
-                # 4H Resampling
                 logic_h = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
                 if 'Volume' not in valid_hourly.columns: valid_hourly['Volume'] = 0
                 
@@ -380,6 +378,30 @@ def fetch_all_timeframes():
                  try: dxy_df = dxy_df.xs(ticker, level=0, axis=1)
                  except: continue
              data_store['dxy_1h'] = dxy_df
+             break
+        except: continue
+
+    # --- FETCH OIL ---
+    for ticker in oil_tickers:
+        try:
+             oil_df = yf.download(ticker, period="60d", interval="1h", progress=False)
+             if oil_df is None or oil_df.empty: continue
+             if isinstance(oil_df.columns, pd.MultiIndex):
+                 try: oil_df = oil_df.xs(ticker, level=0, axis=1)
+                 except: continue
+             data_store['oil_1h'] = oil_df
+             break
+        except: continue
+
+    # --- FETCH YIELDS (US10Y) ---
+    for ticker in yield_tickers:
+        try:
+             yield_df = yf.download(ticker, period="60d", interval="1h", progress=False)
+             if yield_df is None or yield_df.empty: continue
+             if isinstance(yield_df.columns, pd.MultiIndex):
+                 try: yield_df = yield_df.xs(ticker, level=0, axis=1)
+                 except: continue
+             data_store['yield_1h'] = yield_df
              break
         except: continue
              
