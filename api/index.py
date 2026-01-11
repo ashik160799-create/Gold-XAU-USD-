@@ -71,95 +71,113 @@ def calculate_indicators(df):
     return df
 
 def fetch_all_timeframes():
-    """Fetches and prepares data for all 8 timeframes."""
+    """Fetches and prepares data for all 8 timeframes with Robust Fallback."""
     data_store = {}
     
-    # 1. Fetch Standard Timeframes directly
-    # Use XAUUSD=X (Spot Gold) instead of futures for better Forex alignment
-    ticker = "XAUUSD=X"
+    # Ticker Priority: 1. Futures (Volume data), 2. Spot (Reliable Price)
+    tickers_to_try = ["GC=F", "XAUUSD=X"]
     
-    # Group 1: Intraday (We'll resample 5m/15m from 1m for better data consistency)
-    tickers_intraday = yf.download(ticker, period="7d", interval="1m", progress=False, timeout=15) # 1m
+    success_ticker = None
     
-    # Group 2: Hourly/Swing (Source for 2H/4H)
-    tickers_1h = yf.download(ticker, period="1y", interval="1h", progress=False, timeout=15) # 1h
-    
-    # Group 3: Daily/Weekly
-    tickers_1d = yf.download(ticker, period="2y", interval="1d", progress=False, timeout=15) # 1d
-    tickers_1wk = yf.download(ticker, period="2y", interval="1wk", progress=False, timeout=15) # 1wk
-    
-    # Store accessible dfs
-    def process_yf(df, name="unknown"):
-        if df is None or df.empty: 
-            print(f"DEBUG: {name} fetch returned empty data")
-            return None
+    for ticker in tickers_to_try:
+        print(f"DEBUG: Attempting to fetch data for {ticker}...")
         
-        # Handle MultiIndex if present (common in new yfinance 0.2.x+)
-        if isinstance(df.columns, pd.MultiIndex):
-            ticker_found = False
-            for level in range(df.columns.nlevels):
-                if ticker in df.columns.get_level_values(level):
-                     df = df.xs(ticker, level=level, axis=1)
-                     ticker_found = True
-                     break
-            
-            # If still MultiIndex, fallback to level 0
-            if not ticker_found and isinstance(df.columns, pd.MultiIndex):
-                 df.columns = df.columns.get_level_values(0)
+        # Group 1: Intraday (We'll resample 5m/15m from 1m for better consistency)
+        tickers_intraday = yf.download(ticker, period="7d", interval="1m", progress=False, timeout=20) 
+        
+        # Group 2: Hourly
+        tickers_1h = yf.download(ticker, period="1y", interval="1h", progress=False, timeout=20) 
+        
+        # Group 3: Daily/Weekly
+        tickers_1d = yf.download(ticker, period="2y", interval="1d", progress=False, timeout=20) 
+        tickers_1wk = yf.download(ticker, period="2y", interval="1wk", progress=False, timeout=20) 
 
-        # Ensure we have required columns
-        if 'Close' not in df.columns and 'Adj Close' in df.columns:
-            df['Close'] = df['Adj Close']
-            
-        req = ['Open', 'High', 'Low', 'Close', 'Volume']
-        if not all(col in df.columns for col in req):
-            # Try to find columns case-insensitively
-            found_cols = {}
-            for r in req:
-                for c in df.columns:
-                    if str(c).lower() == r.lower():
-                        found_cols[r] = c
-                        break
-            
-            if len(found_cols) == len(req):
-                df = df.rename(columns={v: k for k, v in found_cols.items()})
-            else:
-                print(f"DEBUG: {name} missing columns: {list(df.columns)}")
+        # Inner Helper with VOLATILITY FIX logic
+        def process_yf(df, name="unknown"):
+            if df is None or df.empty: 
                 return None
-        
-        # Drop any NaN rows that might break calculations
-        df = df.dropna(subset=['Close'])
-        print(f"DEBUG: {name} processed: {len(df)} rows")
-        return df
+            
+            # Handle MultiIndex if present
+            if isinstance(df.columns, pd.MultiIndex):
+                ticker_found = False
+                for level in range(df.columns.nlevels):
+                    if ticker in df.columns.get_level_values(level):
+                         df = df.xs(ticker, level=level, axis=1)
+                         ticker_found = True
+                         break
+                # Fallback: just take the first level if ticker not explicitly found 
+                # (sometimes yfinance returns columns like "Close" directly if only 1 ticker)
+                if not ticker_found:
+                     # Check if it's already flat
+                     pass 
+                
+                # Flatten if still multiindex
+                if isinstance(df.columns, pd.MultiIndex):
+                      df.columns = df.columns.get_level_values(0)
 
-    data_store['1m'] = process_yf(tickers_intraday, "1m")
-    
-    # Resampling Logic
-    logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-    
-    if data_store['1m'] is not None:
-        data_store['5m'] = data_store['1m'].resample('5min').agg(logic).dropna()
-        data_store['15m'] = data_store['1m'].resample('15min').agg(logic).dropna()
-        print(f"DEBUG: 5m resampled: {len(data_store['5m'])} rows")
-        print(f"DEBUG: 15m resampled: {len(data_store['15m'])} rows")
-    else:
-        # Fallback to direct fetch if 1m failed
-        print("DEBUG: 1m failed, attempting direct 5m/15m fetch")
-        df_5m = yf.download(ticker, period="5d", interval="5m", progress=False, timeout=15)
-        df_15m = yf.download(ticker, period="5d", interval="15m", progress=False, timeout=15)
-        data_store['5m'] = process_yf(df_5m, "5m")
-        data_store['15m'] = process_yf(df_15m, "15m")
+            # Ensure we have required columns
+            # Map variations
+            if 'Close' not in df.columns and 'Adj Close' in df.columns:
+                df['Close'] = df['Adj Close']
+                
+            # VOLUME IS NOW OPTIONAL - FIX FOR FOREX FEEDS
+            if 'Volume' not in df.columns:
+                df['Volume'] = 0
+                
+            req = ['Open', 'High', 'Low', 'Close'] # Reduced requirements
+            if not all(col in df.columns for col in req):
+                # Try case insensitive match
+                missing = []
+                for r in req:
+                     found = False
+                     for c in df.columns:
+                          if r.lower() == str(c).lower():
+                               df = df.rename(columns={c: r})
+                               found = True
+                               break
+                     if not found: missing.append(r)
+                
+                if missing:
+                     print(f"DEBUG: {name} missing columns: {missing}")
+                     return None
+            
+            df = df.dropna(subset=['Close'])
+            if len(df) < 5: return None
+            return df
 
-    data_store['1h'] = process_yf(tickers_1h, "1h")
-    data_store['1d'] = process_yf(tickers_1d, "1d")
-    data_store['1wk'] = process_yf(tickers_1wk, "1wk")
+        # Validation Check using 1H data (most stable)
+        check_df = process_yf(tickers_1h, "1h_check")
+        if check_df is not None:
+            print(f"DEBUG: Success with {ticker}")
+            success_ticker = ticker
+            
+            # Process all
+            data_store['1m'] = process_yf(tickers_intraday, "1m")
+            
+            # Resampling Logic
+            logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+            if data_store['1m'] is not None:
+                data_store['5m'] = data_store['1m'].resample('5min').agg(logic).dropna()
+                data_store['15m'] = data_store['1m'].resample('15min').agg(logic).dropna()
+            else:
+                # Fallback fetch
+                df_5m = yf.download(ticker, period="5d", interval="5m", progress=False, timeout=20)
+                df_15m = yf.download(ticker, period="5d", interval="15m", progress=False, timeout=20)
+                data_store['5m'] = process_yf(df_5m, "5m")
+                data_store['15m'] = process_yf(df_15m, "15m")
 
-    # Resampling for 2H and 4H
-    if data_store['1h'] is not None:
-        logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
-        data_store['2h'] = data_store['1h'].resample('2h').agg(logic).dropna()
-        data_store['4h'] = data_store['1h'].resample('4h').agg(logic).dropna()
-
+            data_store['1h'] = check_df
+            data_store['1d'] = process_yf(tickers_1d, "1d")
+            data_store['1wk'] = process_yf(tickers_1wk, "1wk")
+            
+            # 2H/4H Resampling
+            data_store['2h'] = data_store['1h'].resample('2h').agg(logic).dropna()
+            data_store['4h'] = data_store['1h'].resample('4h').agg(logic).dropna()
+            
+            break # Exit loop on success
+        else:
+            print(f"DEBUG: Failed with {ticker}, trying next...")
+            
     return data_store
 
 def analyze_timeframe(tf, df):
@@ -187,42 +205,44 @@ def analyze_timeframe(tf, df):
 
     # 1. Trend (40%)
     trend_score = 0
-    if last['Close'] > last['EMA200']: trend_score += 10
-    else: trend_score -= 10
+    if not pd.isna(last['EMA200']):
+        if last['Close'] > last['EMA200']: trend_score += 10
+        else: trend_score -= 10
     
-    if last['EMA21'] > last['EMA50']: 
-        trend_score += 10
-        reasons.append("Bullish Trend")
-    elif last['EMA21'] < last['EMA50']:
-        trend_score -= 10
-        reasons.append("Bearish Trend")
-    else:
-        reasons.append("Trend Neutral")
+    if not pd.isna(last['EMA21']) and not pd.isna(last['EMA50']):
+        if last['EMA21'] > last['EMA50']: 
+            trend_score += 10
+            reasons.append("Bullish Trend")
+        elif last['EMA21'] < last['EMA50']:
+            trend_score -= 10
+            reasons.append("Bearish Trend")
 
     score += trend_score
 
     # 2. Momentum (30%)
     mom_score = 0
     # RSI
-    if last['RSI'] > 55: mom_score += 5
-    elif last['RSI'] < 45: mom_score -= 5
+    if not pd.isna(last['RSI']):
+        if last['RSI'] > 55: mom_score += 5
+        elif last['RSI'] < 45: mom_score -= 5
     
     # MACD
-    if last['MACD'] > last['Signal_Line']: mom_score += 10; reasons.append("MACD Bullish")
-    else: mom_score -= 10; reasons.append("MACD Bearish")
+    if not pd.isna(last['MACD']) and not pd.isna(last['Signal_Line']):
+        if last['MACD'] > last['Signal_Line']: mom_score += 10; reasons.append("MACD Bullish")
+        else: mom_score -= 10; reasons.append("MACD Bearish")
 
     score += mom_score
 
     # 3. Volatility/PA (30%)
     vol_score = 0
-    # BB Expansion
-    bb_width = last['BB_Upper'] - last['BB_Lower']
-    prev_bb_width = prev['BB_Upper'] - prev['BB_Lower']
-    if bb_width > prev_bb_width * 1.1: reasons.append("Vol Expanding")
-    
-    # Price vs BB
-    if last['Close'] > last['BB_Upper']: vol_score += 10
-    elif last['Close'] < last['BB_Lower']: vol_score -= 10
+    # BB
+    if not pd.isna(last['BB_Upper']) and not pd.isna(prev['BB_Upper']):
+        bb_width = last['BB_Upper'] - last['BB_Lower']
+        prev_bb_width = prev['BB_Upper'] - prev['BB_Lower']
+        if bb_width > prev_bb_width * 1.1: reasons.append("Vol Expanding")
+        
+        if last['Close'] > last['BB_Upper']: vol_score += 10
+        elif last['Close'] < last['BB_Lower']: vol_score -= 10
 
     score += vol_score
 
@@ -245,13 +265,22 @@ def analyze_timeframe(tf, df):
     desc_parts = []
     
     # Trend Desc
-    if last['Close'] > last['EMA200']: desc_parts.append("Uptrend")
-    else: desc_parts.append("Downtrend")
+    if not pd.isna(last['EMA200']):
+        if last['Close'] > last['EMA200']: desc_parts.append("Uptrend")
+        else: desc_parts.append("Downtrend")
+    else:
+        # Fallback to EMA21 vs EMA50 if EMA200 not available
+        if not pd.isna(last['EMA21']) and not pd.isna(last['EMA50']):
+            if last['EMA21'] > last['EMA50']: desc_parts.append("Bullish")
+            else: desc_parts.append("Bearish")
     
     # Key Factors
-    desc_parts.append(f"RSI {int(last['RSI'])}")
-    if last['MACD'] > last['Signal_Line']: desc_parts.append("MACD +")
-    else: desc_parts.append("MACD -")
+    if not pd.isna(last['RSI']):
+        desc_parts.append(f"RSI {int(last['RSI'])}")
+    
+    if not pd.isna(last['MACD']) and not pd.isna(last['Signal_Line']):
+        if last['MACD'] > last['Signal_Line']: desc_parts.append("MACD +")
+        else: desc_parts.append("MACD -")
 
     # Merge reasons for detail if needed, but keep short for UI
     final_desc = ", ".join(desc_parts)
