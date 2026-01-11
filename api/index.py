@@ -71,71 +71,60 @@ def calculate_indicators(df):
     return df
 
 def fetch_all_timeframes():
-    """Fetches and prepares data for all 8 timeframes."""
+    """Fetches and prepares data for all 8 timeframes efficiently."""
     data_store = {}
     
-    # 1. Fetch Standard Timeframes directly
-    # Group 1: Intraday
-    tickers_intraday = yf.download("GC=F", period="5d", interval="1m", progress=False) # 1m
-    tickers_5m = yf.download("GC=F", period="5d", interval="5m", progress=False) # 5m
-    tickers_15m = yf.download("GC=F", period="5d", interval="15m", progress=False) # 15m
-    
-    # Group 2: Hourly/Swing (Source for 2H/4H)
-    tickers_1h = yf.download("GC=F", period="1y", interval="1h", progress=False) # 1h
-    
-    # Group 3: Daily/Weekly
-    tickers_1d = yf.download("GC=F", period="2y", interval="1d", progress=False) # 1d
-    tickers_1wk = yf.download("GC=F", period="2y", interval="1wk", progress=False) # 1wk
+    try:
+        # 1. Fetch 1m data (Max 7 days allowed for 1m interval)
+        # We use 5d as a safe range to resample 5m and 15m
+        df_1m = yf.download("GC=F", period="5d", interval="1m", progress=False, timeout=10)
+        
+        # 2. Fetch 1h data (For 1h, 2h, 4h)
+        df_1h = yf.download("GC=F", period="1y", interval="1h", progress=False, timeout=10)
+        
+        # 3. Fetch Daily and Weekly
+        df_1d = yf.download("GC=F", period="2y", interval="1d", progress=False, timeout=10)
+        df_1wk = yf.download("GC=F", period="2y", interval="1wk", progress=False, timeout=10)
+    except Exception as e:
+        print(f"Download Error: {e}")
+        return {}
 
-    # Store accessible dfs
+    # Helper to process dataframes
     def process_yf(df):
         if df is None or df.empty: return None
-        
-        # Handle MultiIndex if present (common in new yfinance 0.2.x+)
         if isinstance(df.columns, pd.MultiIndex):
-            # Check if 'GC=F' is in any of the levels
             ticker_found = False
             for level in range(df.columns.nlevels):
                 if 'GC=F' in df.columns.get_level_values(level):
                     df = df.xs('GC=F', level=level, axis=1)
                     ticker_found = True
                     break
-            
-            # If ticker not found in levels but it's a MultiIndex, 
-            # it might be that the columns are (Metric, Ticker)
             if not ticker_found:
-                # Fallback: just take the first level if it looks like what we need
                 df.columns = df.columns.get_level_values(0)
         
-        # Ensure we have required columns
         req = ['Open', 'High', 'Low', 'Close', 'Volume']
         if not all(col in df.columns for col in req):
-            # Try to find columns case-insensitively
-            found_cols = {}
-            for r in req:
-                for c in df.columns:
-                    if str(c).lower() == r.lower():
-                        found_cols[r] = c
-            
+            found_cols = {r: c for r in req for c in df.columns if str(c).lower() == r.lower()}
             if len(found_cols) == len(req):
                 df = df.rename(columns={v: k for k, v in found_cols.items()})
             else:
                 return None
+        return df.dropna(subset=['Close'])
+
+    # Process base timeframes
+    data_store['1m'] = process_yf(df_1m)
+    data_store['1h'] = process_yf(df_1h)
+    data_store['1d'] = process_yf(df_1d)
+    data_store['1wk'] = process_yf(df_1wk)
+
+    # Resampling Logic
+    logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+    
+    if data_store['1m'] is not None:
+        data_store['5m'] = data_store['1m'].resample('5min').agg(logic).dropna()
+        data_store['15m'] = data_store['1m'].resample('15min').agg(logic).dropna()
         
-        # Drop any NaN rows that might break calculations
-        df = df.dropna(subset=['Close'])
-        return df
-
-    data_store['1m'] = process_yf(tickers_intraday)
-    data_store['5m'] = process_yf(tickers_5m)
-    data_store['15m'] = process_yf(tickers_15m)
-    data_store['1h'] = process_yf(tickers_1h)
-    data_store['1d'] = process_yf(tickers_1d)
-    data_store['1wk'] = process_yf(tickers_1wk)
-
-    # Resampling for 2H and 4H
     if data_store['1h'] is not None:
-        logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
         data_store['2h'] = data_store['1h'].resample('2h').agg(logic).dropna()
         data_store['4h'] = data_store['1h'].resample('4h').agg(logic).dropna()
 
@@ -201,7 +190,7 @@ def analyze_timeframe(tf, df):
 
     # --- SIGNAL GENERATION ---
     signal = "WAIT"
-    color = "text-yellow-500" # Tailwind class concept or CSS var
+    color = "signal-wait"
     
     if score >= 65:
         signal = "BUY"
@@ -214,7 +203,6 @@ def analyze_timeframe(tf, df):
         color = "signal-wait"
 
     # Construct Description
-    # "Uptrend strong, EMA21>EMA50, RSI 62"
     desc_parts = []
     
     # Trend Desc
@@ -222,7 +210,15 @@ def analyze_timeframe(tf, df):
     else: desc_parts.append("Downtrend")
     
     # Key Factors
-    desc_parts.append(f"RSI {int(last['RSI'])}")
+    try:
+        rsi_val = last['RSI']
+        if pd.isna(rsi_val):
+            desc_parts.append("RSI N/A")
+        else:
+            desc_parts.append(f"RSI {int(rsi_val)}")
+    except:
+        desc_parts.append("RSI N/A")
+        
     if last['MACD'] > last['Signal_Line']: desc_parts.append("MACD +")
     else: desc_parts.append("MACD -")
 
