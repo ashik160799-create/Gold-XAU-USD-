@@ -23,37 +23,36 @@ def get_session_profile_dubai():
 
     if 2 <= dubai_hour < 12: return "ASIAN (RANGE)", 0.7 
     if 12 <= dubai_hour < 17: return "LONDON (BREAKOUT)", 1.2
-    if 17 <= dubai_hour < 21: return "OVERLAP (STRONGEST)", 1.6 # Boosted for overlap
+    if 17 <= dubai_hour < 21: return "OVERLAP (STRONGEST)", 1.6 
     if 21 <= dubai_hour < 23: return "NY (VOLATILE)", 1.4
     return "LATE NY (FADE)", 0.9
 
 def fetch_live_data(interval):
     """
     Fetches REAL market data from Yahoo Finance.
-    Adapts 'period' based on 'interval' to ensure enough data.
+    Keeps 20 candles for Acceleration & Correlation logic.
     """
     try:
-        # Map user interval to yfinance interval & period
         yf_interval = interval
-        period = "1d"
+        period = "5d" # Default larger period for context
         
+        # Adaptation for periods
         if interval == "1m": period = "1d"
-        elif interval == "5m": period = "1d"
+        elif interval == "5m": period = "5d"
         elif interval == "15m": period = "5d"
         elif interval == "1h": period = "1mo"
-        elif interval == "4h": yf_interval = "1h"; period = "1mo" 
+        elif interval == "4h": yf_interval = "1h"; period = "3mo" 
         elif interval == "1d": period = "1y"
         elif interval == "1wk": period = "2y"
 
         tickers = ["GC=F", "DX-Y.NYB", "^TNX"]
         
-        # Download
         data = yf.download(tickers, period=period, interval=yf_interval, progress=False)
 
         prices = {"GOLD": [], "DXY": [], "US10Y": []}
         
-        # Get last 5 valid data points
-        df = data['Close'].tail(5)
+        # Get last 20 valid data points
+        df = data['Close'].tail(21) # Need 21 to get 20 deltas if needed, safe buffer
         
         for index, row in df.iterrows():
             g = row.get('GC=F'); d = row.get('DX-Y.NYB'); u = row.get('^TNX')
@@ -61,8 +60,7 @@ def fetch_live_data(interval):
             if d and d > 0: prices["DXY"].append(float(d))
             if u and u > 0: prices["US10Y"].append(float(u))
 
-        if len(prices["GOLD"]) < 2:
-             # Fallback
+        if len(prices["GOLD"]) < 5:
              return generate_simulation_snapshot(0.1)
 
         return prices
@@ -74,63 +72,112 @@ def generate_simulation_snapshot(vol_mult):
     import random
     gold_base = 2500.0; dxy_base = 102.5; yield_base = 4.05
     prices = {"GOLD": [], "DXY": [], "US10Y": []}
-    for i in range(5):
+    for i in range(20):
         prices["GOLD"].append(gold_base + random.uniform(-1, 1))
         prices["DXY"].append(dxy_base + random.uniform(-0.05, 0.05))
         prices["US10Y"].append(yield_base + random.uniform(-0.01, 0.01))
     return prices
 
+def calculate_std(values):
+    """Simple standard deviation clone"""
+    if len(values) < 2: return 0
+    mean = sum(values) / len(values)
+    variance = sum((x - mean) ** 2 for x in values) / len(values)
+    return variance ** 0.5
+
 def calculate_logic(prices, session_name, session_vol):
-    """Core Logic based on Professional Inter-Market Intelligence"""
+    """
+    LEVEL-5+ INSTITUTIONAL ENGINE
+    Specs: Acceleration, Correlation Check, Stop-Hunt Filter, Yield Dominance.
+    """
     
-    # 1. Calculate Momentum (Deltas)
+    # Basic Validation
+    if len(prices["GOLD"]) < 5: return {"signal": "WAIT", "formatted_report": "Not enough data"}
+    
+    # --- 1. DATA PREP & METRICS ---
+    # Current Prices
+    gold_now = prices["GOLD"][-1]; gold_prev = prices["GOLD"][-2]
     dxy_now = prices["DXY"][-1]; dxy_prev = prices["DXY"][-2]
     u10_now = prices["US10Y"][-1]; u10_prev = prices["US10Y"][-2]
-    gold_now = prices["GOLD"][-1]; gold_prev = prices["GOLD"][-2]
     
+    # Deltas (Momentum)
+    gold_delta = gold_now - gold_prev
     dxy_delta = dxy_now - dxy_prev
     yield_delta = u10_now - u10_prev
-    gold_delta = gold_now - gold_prev
     
-    # 2. Market Regime Detection
-    # If DXY volatility dominates -> USD DOMINANT
-    # If volatility low -> NEUTRAL
-    # If Gold independent -> RISK DOMINANT (or 'Gold Independent')
+    # Acceleration (Delta - Prev Delta)
+    gold_acc = gold_delta - (gold_prev - prices["GOLD"][-3])
+    dxy_acc = dxy_delta - (dxy_prev - prices["DXY"][-3])
+    yield_acc = yield_delta - (u10_prev - prices["US10Y"][-3])
     
-    # Simple magnitude check (normalization is rough here but effective for relativity)
-    # 0.05 dxy change ~ 0.02 yield change ~ 2.0 gold change
-    norm_dxy = abs(dxy_delta) / 0.05
-    norm_yield = abs(yield_delta) / 0.02
-    norm_gold = abs(gold_delta) / 2.0
+    # Volatility / Std Dev (Last 10 candles)
+    gold_std = calculate_std(prices["GOLD"][-10:])
+    dxy_std = calculate_std(prices["DXY"][-10:])
+    yield_std = calculate_std(prices["US10Y"][-10:])
     
-    regime = "NEUTRAL"
-    if norm_dxy > 1.5 and norm_dxy > norm_yield:
-        regime = "USD DOMINANT"
-    elif norm_gold > 1.5 and norm_gold > norm_dxy and norm_gold > norm_yield:
-        regime = "RISK DOMINANT" # Or Gold Breakout
+    # Correlation (Directional Agreement Last 10)
+    # Inverse is GOOD (Gold Up, DXY Down). Same direction is BAD.
+    inverse_count = 0
+    total_checks = 0
+    subset_len = min(len(prices["GOLD"]), 10)
+    for i in range(1, subset_len):
+        g_chg = prices["GOLD"][-i] - prices["GOLD"][-(i+1)]
+        d_chg = prices["DXY"][-i] - prices["DXY"][-(i+1)]
+        if (g_chg > 0 and d_chg < 0) or (g_chg < 0 and d_chg > 0):
+            inverse_count += 1
+        total_checks += 1
         
-    weights = {"USD": abs(dxy_delta), "RISK": abs(yield_delta)} # Keep for visual debugging
+    inverse_ratio = inverse_count / max(1, total_checks)
+    correlation_status = "NORMAL"
+    if inverse_ratio <= 0.4: correlation_status = "BROKEN" # Moving together too much
     
-    # 3. Weighted Scoring System (Neutral = 50)
-    score = 50
+    # --- 2. SAFETY FILTERS (HARD BLOCKS) ---
+    lock_reason = None
+    is_locked = False
     
-    # Gold Delta: Bullish +, Bearish -
-    score += gold_delta * 0.5 
+    # A. Volatility Lock (News Shock)
+    # Threshold: DXY move > 2x Std Dev (Statistical Shock) or user fixed 0.2 approx
+    shock_threshold = 2.0 * dxy_std if dxy_std > 0.02 else 0.15 * session_vol
+    if abs(dxy_delta) > shock_threshold:
+        is_locked = True
+        lock_reason = "VOLATILITY SHOCK"
+        
+    # B. Stop-Hunt Detector
+    # Gold moves fast (>1.5 std), DXY & Yields asleep (<0.2 std OR < 0.02 absolute min)
+    if not is_locked:
+        # Use simple epsilon to handle flat markets (std=0) or low volatility
+        dxy_limit = max(0.2 * dxy_std, 0.02)
+        yield_limit = max(0.2 * yield_std, 0.01)
+        
+        if (abs(gold_delta) > 1.5 * gold_std) and (abs(dxy_delta) < dxy_limit) and (abs(yield_delta) < yield_limit):
+            is_locked = True
+            lock_reason = "STOP-HUNT DETECTED"
+            
+    # C. Correlation Broken
+    if not is_locked and correlation_status == "BROKEN":
+        is_locked = True
+        lock_reason = "CORRELATION BROKEN"
+
+    # --- 3. SCORING & INTER-MARKET LOGIC ---
+    score = 50.0
     
-    # Inter-Market Correlation
-    # DXY: Inverse to Gold (Strong)
-    # DXY Positive -> Subtract from score
-    # DXY Negative -> Add to score
-    # Weight: approx -50 factor (tunable)
-    score += (dxy_delta * -50) 
+    # 3.1 Base Momentum (Gold)
+    score += gold_delta * 0.6 # Boosted slightly for trend
+    if (gold_delta > 0 and gold_acc > 0) or (gold_delta < 0 and gold_acc < 0):
+        # Acceleration confirming direction
+        score += (gold_acc * 0.2)
+        
+    # 3.2 Inter-Market (DXY & Yields)
+    # Standard weighting
+    score += (dxy_delta * -60) # Stronger DXY Impact
+    score += (yield_delta * -100) # Yield dominance
     
-    # Yields: Inverse to Gold (very Strong)
-    # Yield Positive -> Subtract VERY heavily
-    # Yield Negative -> Add
-    # Weight: approx -100 factor (Impact stronger than DXY)
-    score += (yield_delta * -100)
+    # 3.3 Acceleration Confirmation from Inter-market
+    # If DXY accelerating UP -> Bad for Gold -> Lower score
+    score += (dxy_acc * -20)
+    score += (yield_acc * -40)
     
-    # 4. Session Intelligence (Dubai Time)
+    # 3.4 Session Multiplier
     deviation = score - 50
     score = 50 + (deviation * session_vol)
     score = max(0, min(100, score))
@@ -138,44 +185,42 @@ def calculate_logic(prices, session_name, session_vol):
     buy_prob = int(score)
     sell_prob = int(100 - score)
     
-    # 5. Safety Lock (Critical)
-    # If DXY move > 20% of expected volatility (approx 0.10 absolute in 5m terms or adjusted by session)
-    # Here we use the simplified logic: 0.2 * session_vol (which averages 1.0) -> 0.2 dxy points is HUGE for 5m.
-    # Let's stick to the user's rule.
-    is_locked = False
-    lock_threshold = 0.2 * session_vol # E.g. 0.2 * 1.5 = 0.3 DXY points. This is a massive crash/spike.
+    # --- 4. FINAL DECISION RULES ---
+    # > 65 BUY, < 35 SELL, else WAIT
+    # Lock Overrides ALL
     
-    if abs(dxy_delta) > lock_threshold: 
-        is_locked = True
-        # Force Confidence toward 50 (Wait)
+    bias_strength = "Weak"
+    signal = "WAIT"
+    
+    if is_locked:
+        signal = f"WAIT ({lock_reason})" if lock_reason else "WAIT (LOCKED)"
+        # Force probs to neutral visual
         buy_prob = 50
         sell_prob = 50
-        
-    # 6. Final Signal
-    # > 60 BUY, < 40 SELL, 45-55 WAIT
-    signal = "WAIT"
-    if is_locked:
-        signal = "WAIT (LOCKED)"
-    elif buy_prob >= 60:
-        signal = "BUY"
-    elif sell_prob >= 60: # Which means score <= 40
-        signal = "SELL"
     else:
-        signal = "WAIT"
+        if buy_prob >= 65:
+            signal = "BUY"
+            bias_strength = "Strong" if buy_prob > 75 else "Moderate"
+        elif sell_prob >= 65: # means score <= 35
+            signal = "SELL"
+            bias_strength = "Strong" if sell_prob > 75 else "Moderate"
+        else:
+            signal = "WAIT"
+            bias_strength = "Weak"
 
-    # Strictly formatted output string for easy reading
+    # Formatted Output
     formatted_output = f"""
 Signal: {signal}
-Confidence: {buy_prob if buy_prob > 50 else sell_prob}% {'(BUY bias)' if buy_prob > 50 else '(SELL bias)'}
+Confidence: {buy_prob if buy_prob > 50 else sell_prob}%
 Session: {session_name}
-Regime: {regime}
+Bias Strength: {bias_strength}
 Lock: {'ON' if is_locked else 'OFF'}
 """
 
     return {
         "signal": signal,
-        "probs": {"buy": buy_prob, "sell": sell_prob, "wait": 100 - abs(buy_prob - sell_prob) if not is_locked else 100}, # visual filler
-        "regime": regime,
+        "probs": {"buy": buy_prob, "sell": sell_prob},
+        "regime": "Level-5+", # Placeholder or calculated if needed
         "lock": is_locked,
         "formatted_report": formatted_output,
         "data": {
