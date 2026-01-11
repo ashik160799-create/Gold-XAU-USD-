@@ -197,12 +197,16 @@
 
                 if (data.error) {
                     console.error("API Error:", data.error);
+                    const tbody = document.getElementById('signal-table');
+                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--sell-color);">API Error: ${data.error}</td></tr>`;
                     return;
                 }
 
                 updateUI(data);
             } catch (error) {
                 console.error("Fetch Error:", error);
+                const tbody = document.getElementById('signal-table');
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--sell-color);">Connection Error: ${error.message}</td></tr>`;
             }
         }
 

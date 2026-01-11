@@ -89,14 +89,41 @@ def fetch_all_timeframes():
 
     # Store accessible dfs
     def process_yf(df):
-        if df.empty: return None
-        # Handle MultiIndex if present (common in new yfinance)
+        if df is None or df.empty: return None
+        
+        # Handle MultiIndex if present (common in new yfinance 0.2.x+)
         if isinstance(df.columns, pd.MultiIndex):
-            df = df.xs('GC=F', level=0, axis=1) if 'GC=F' in df.columns.levels[0] else df
+            # Check if 'GC=F' is in any of the levels
+            ticker_found = False
+            for level in range(df.columns.nlevels):
+                if 'GC=F' in df.columns.get_level_values(level):
+                    df = df.xs('GC=F', level=level, axis=1)
+                    ticker_found = True
+                    break
+            
+            # If ticker not found in levels but it's a MultiIndex, 
+            # it might be that the columns are (Metric, Ticker)
+            if not ticker_found:
+                # Fallback: just take the first level if it looks like what we need
+                df.columns = df.columns.get_level_values(0)
         
         # Ensure we have required columns
         req = ['Open', 'High', 'Low', 'Close', 'Volume']
-        if not all(col in df.columns for col in req): return None
+        if not all(col in df.columns for col in req):
+            # Try to find columns case-insensitively
+            found_cols = {}
+            for r in req:
+                for c in df.columns:
+                    if str(c).lower() == r.lower():
+                        found_cols[r] = c
+            
+            if len(found_cols) == len(req):
+                df = df.rename(columns={v: k for k, v in found_cols.items()})
+            else:
+                return None
+        
+        # Drop any NaN rows that might break calculations
+        df = df.dropna(subset=['Close'])
         return df
 
     data_store['1m'] = process_yf(tickers_intraday)
@@ -116,8 +143,11 @@ def fetch_all_timeframes():
 
 def analyze_timeframe(tf, df):
     """Generates signal and description for a specific timeframe."""
-    if df is None or len(df) < MIN_HISTORY:
-        return {"timeframe": tf.upper(), "signal": "WAIT", "description": "Insufficient Data", "color": "text-muted"}
+    if df is None:
+         return {"timeframe": tf.upper(), "signal": "WAIT", "description": "Data Fetch Failed (Empty)", "color": "text-muted"}
+         
+    if len(df) < 5: # bare minimum
+         return {"timeframe": tf.upper(), "signal": "WAIT", "description": f"Insufficient Data (Rows: {len(df)})", "color": "text-muted"}
 
     # Run Indicators
     df = calculate_indicators(df)
