@@ -174,6 +174,70 @@
             font-size: 0.9rem;
             margin-top: 20px;
         }
+
+        /* Matrix Styles */
+        .matrix-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .matrix-title {
+            text-align: center;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 5px;
+        }
+
+        .matrix-row {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .matrix-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 70px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .matrix-box.buy {
+            background: rgba(35, 134, 54, 0.2);
+            border-color: var(--accent-green);
+            color: #3fb950;
+        }
+
+        .matrix-box.sell {
+            background: rgba(218, 54, 51, 0.2);
+            border-color: var(--accent-red);
+            color: #f85149;
+        }
+
+        .matrix-box.wait {
+            background: rgba(139, 148, 158, 0.1);
+            color: var(--text-muted);
+        }
+
+        .align-text {
+            text-align: center;
+            font-weight: bold;
+            font-size: 1rem;
+            margin-top: 5px;
+            color: #fff;
+        }
     </style>
 </head>
 
@@ -183,6 +247,26 @@
         <div class="header">
             <h1>Gold Intelligence AI</h1>
             <div id="session-tag" class="session-tag">Loading Session...</div>
+        </div>
+
+        <!-- God Mode Matrix -->
+        <div class="matrix-container">
+            <div class="matrix-title">GOD MODE ALIGNMENT</div>
+            <div class="matrix-row">
+                <div id="box-5m" class="matrix-box wait">
+                    <span>5M</span>
+                    <span class="state">...</span>
+                </div>
+                <div id="box-1h" class="matrix-box wait">
+                    <span>1H</span>
+                    <span class="state">...</span>
+                </div>
+                <div id="box-4h" class="matrix-box wait">
+                    <span>4H</span>
+                    <span class="state">...</span>
+                </div>
+            </div>
+            <div id="align-text" class="align-text">LOADING...</div>
         </div>
 
         <!-- Timeframes -->
@@ -222,6 +306,10 @@
             <div class="row">
                 <span class="label">REGIME</span>
                 <span id="regime-text" class="value">Loading...</span>
+            </div>
+            <div class="row">
+                <span class="label">BIAS STRENGTH</span>
+                <span id="bias-text" class="value">...</span>
             </div>
             <div class="row" style="margin-top: 10px;">
                 <span class="label">DXY (Dol) Speed</span>
@@ -264,8 +352,38 @@
             }
         }
 
+        function updateMatrixBox(id, signal) {
+            const el = document.getElementById(id);
+            const state = el.querySelector('.state');
+
+            el.className = 'matrix-box'; // Reset
+            let shortSig = "WAIT";
+            if (signal.includes("BUY")) {
+                el.classList.add("buy");
+                shortSig = "BUY";
+            } else if (signal.includes("SELL")) {
+                el.classList.add("sell");
+                shortSig = "SELL";
+            } else {
+                el.classList.add("wait");
+                shortSig = "WAIT";
+            }
+            // If locked
+            if (signal.includes("LOCKED")) shortSig = "LOCK";
+
+            state.innerText = shortSig;
+        }
+
         function updateUI(data) {
             document.getElementById('session-tag').innerText = `🌍 ${data.session.name} (Dubai Time)`;
+
+            // Matrix Update
+            if (data.matrix) {
+                updateMatrixBox('box-5m', data.matrix.slots['5m']);
+                updateMatrixBox('box-1h', data.matrix.slots['1H']);
+                updateMatrixBox('box-4h', data.matrix.slots['4H']);
+                document.getElementById('align-text').innerText = data.matrix.alignment;
+            }
 
             const signalBox = document.getElementById('signal-box');
             const sig = data.engine.signal;
@@ -285,8 +403,17 @@
             document.getElementById('prob-sell-text').innerText = sellP + '%';
             document.getElementById('bar-sell').style.width = sellP + '%';
 
+            // New Regex/Lock Logic
             const lockStatus = data.engine.lock ? "🔒 LOCKED" : "🔓 OPEN";
             document.getElementById('regime-text').innerText = `${data.engine.regime} ${lockStatus}`;
+
+            // Bias Strength logic from Level-5+ formatted report scan or manual logic check
+            // Since API doesn't send "bias_strength" explicit key in JSON (only in formatted_report string), 
+            // we can parse it or just infer from score.
+            let bias = "Weak";
+            if (buyP > 75 || sellP > 75) bias = "Strong";
+            else if (buyP > 65 || sellP > 65) bias = "Moderate";
+            document.getElementById('bias-text').innerText = bias;
 
             const dxyD = data.engine.data.dxy_delta;
             const dxyEl = document.getElementById('dxy-delta');

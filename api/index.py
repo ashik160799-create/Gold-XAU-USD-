@@ -232,27 +232,76 @@ Lock: {'ON' if is_locked else 'OFF'}
 
 @app.route('/api/status', methods=['GET'])
 def home():
-    # Get Timeframe from URL (default 5m)
+    # Get Timeframe from URL (default 5m) for the Main Display
     tf = request.args.get('interval', '5m')
     
+    # Validation Map
     valid_map = {
         "1m": "1m", "5m": "5m", "15m": "15m", 
         "1H": "1h", "1h": "1h",
-        "4H": "1h", 
+        "4H": "1h", # Fallback 4H -> 1H logic usually, but here we might want actual 1H data representing "Higher Timeframe"
         "1D": "1d", "1d": "1d",
         "1W": "1wk", "1wk": "1wk"
     }
-    yf_tf = valid_map.get(tf, "5m")
+    yf_tf_main = valid_map.get(tf, "5m")
     
     session_name, vol_mult = get_session_profile_dubai()
-    prices = fetch_live_data(yf_tf)
-    intelligence = calculate_logic(prices, session_name, vol_mult)
+    
+    # --- GOD MODE: Fetch 3 Contexts ---
+    # We need 5m, 1H, and 4H (simulated or real) logic
+    # To keep it fast, we fetch them linearly. 
+    
+    # 1. Main Context (The one user asked for)
+    prices_main = fetch_live_data(yf_tf_main)
+    intel_main = calculate_logic(prices_main, session_name, vol_mult)
+    
+    # 2. Hardcoded Contexts for Matrix (5m, 1H, 4H)
+    # We only fetch if main isn't already covering it to save time
+    matrix = {}
+    
+    # Define the 3 matrix slots
+    slots = ["5m", "1H", "4H"]
+    offset_map = {"5m": "5m", "1H": "1h", "4H": "1h"} # Map 4H to 1h data (approx) if yfinance 4h is unavailable or unstable
+    
+    alignment_score = 0
+    signals = []
+    
+    for slot in slots:
+        yf_s = offset_map[slot]
+        
+        # Optimization: If main context is same, reuse result
+        if yf_tf_main == yf_s and tf == slot:
+            res = intel_main
+        else:
+            # Fetch separate
+            p = fetch_live_data(yf_s)
+            res = calculate_logic(p, session_name, vol_mult)
+            
+        matrix[slot] = res["signal"]
+        
+        # Alignment Calculation
+        sig = res["signal"]
+        if "BUY" in sig: alignment_score += 1
+        elif "SELL" in sig: alignment_score -= 1
+        signals.append(sig)
+
+    # Determine Alignment Status
+    # 3/3 Agreement -> GOD MODE
+    align_text = "MIXED"
+    if alignment_score == 3: align_text = "🚀 FULL BUY ALIGNMENT"
+    elif alignment_score == -3: align_text = "🔻 FULL SELL ALIGNMENT"
+    elif alignment_score == 2: align_text = "✅ PARTIAL BUY"
+    elif alignment_score == -2: align_text = "⚠️ PARTIAL SELL"
     
     response = {
         "timestamp": datetime.now().strftime("%H:%M:%S UTC"),
         "timeframe": tf,
         "session": {"name": session_name, "volatility": vol_mult},
-        "engine": intelligence
+        "engine": intel_main,
+        "matrix": {
+            "slots": matrix,
+            "alignment": align_text
+        }
     }
     
     resp = jsonify(response)
