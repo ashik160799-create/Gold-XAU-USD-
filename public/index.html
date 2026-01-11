@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gold Intelligence Level-4+</title>
+    <title>Gold Level-7+ (Pure Institutional)</title>
     <style>
         :root {
             --bg-color: #0d1117;
@@ -15,7 +15,6 @@
             --accent-red: #da3633;
             --accent-yellow: #d29922;
             --border: #30363d;
-            --btn-active: #1f6feb;
         }
 
         body {
@@ -42,7 +41,7 @@
 
         h1 {
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             color: #fff;
         }
 
@@ -56,75 +55,16 @@
             color: var(--text-muted);
         }
 
-        /* Timeframe Buttons */
-        .tf-container {
-            display: flex;
-            justify-content: center;
-            gap: 5px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-
-        .tf-btn {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            color: var(--text-muted);
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: all 0.2s;
-        }
-
-        .tf-btn.active {
-            background-color: var(--btn-active);
-            color: white;
-            border-color: var(--btn-active);
-        }
-
-        /* Dashboard Grid */
-        .card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-
-        .row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .label {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-        }
-
-        .value {
-            font-size: 1.1rem;
-            font-weight: bold;
-        }
-
-        .value.green {
-            color: #3fb950;
-        }
-
-        .value.red {
-            color: #f85149;
-        }
-
         /* Signal Box */
         .signal-box {
             text-align: center;
             padding: 30px;
-            font-size: 2rem;
+            font-size: 2.5rem;
             font-weight: 800;
             border: 2px solid var(--border);
             border-radius: 12px;
             margin-bottom: 20px;
-            text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            text-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
             transition: background 0.5s;
         }
 
@@ -146,97 +86,74 @@
             color: var(--accent-yellow);
         }
 
-        .prob-bar-container {
-            height: 10px;
-            background: var(--border);
-            border-radius: 5px;
-            overflow: hidden;
-            margin-top: 5px;
+        /* Execution Levels (New for Level 6) */
+        .levels-container {
             display: flex;
-        }
-
-        .prob-bar {
-            height: 100%;
-            transition: width 0.5s ease;
-        }
-
-        .prob-buy {
-            background-color: var(--accent-green);
-        }
-
-        .prob-sell {
-            background-color: var(--accent-red);
-        }
-
-        .loader {
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            margin-top: 20px;
-        }
-
-        /* Matrix Styles */
-        .matrix-container {
-            display: flex;
-            flex-direction: column;
             gap: 10px;
             margin-bottom: 20px;
-            background: var(--card-bg);
-            padding: 15px;
-            border-radius: 12px;
-            border: 1px solid var(--border);
         }
 
-        .matrix-title {
+        .level-card {
+            flex: 1;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
             text-align: center;
-            font-size: 0.9rem;
+        }
+
+        .level-title {
+            font-size: 0.8rem;
             color: var(--text-muted);
             margin-bottom: 5px;
         }
 
-        .matrix-row {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-        }
-
-        .matrix-box {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            width: 70px;
-            height: 50px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            font-size: 0.8rem;
+        .level-price {
+            font-size: 1.2rem;
             font-weight: bold;
+            color: #fff;
         }
 
-        .matrix-box.buy {
-            background: rgba(35, 134, 54, 0.2);
-            border-color: var(--accent-green);
-            color: #3fb950;
+        /* Technical Grid */
+        .tech-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
         }
 
-        .matrix-box.sell {
-            background: rgba(218, 54, 51, 0.2);
-            border-color: var(--accent-red);
-            color: #f85149;
+        .tech-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
-        .matrix-box.wait {
-            background: rgba(139, 148, 158, 0.1);
+        .tech-label {
+            font-size: 0.9rem;
             color: var(--text-muted);
         }
 
-        .align-text {
-            text-align: center;
+        .tech-value {
             font-weight: bold;
-            font-size: 1rem;
-            margin-top: 5px;
-            color: #fff;
+        }
+
+        .bullish {
+            color: #3fb950;
+        }
+
+        .bearish {
+            color: #f85149;
+        }
+
+        .loader {
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 20px;
         }
     </style>
 </head>
@@ -245,190 +162,155 @@
 
     <div class="container">
         <div class="header">
-            <h1>Gold Intelligence AI</h1>
-            <div id="session-tag" class="session-tag">Loading Session...</div>
+            <h1>Gold Strategy Analysis</h1>
+            <div id="session-tag" class="session-tag">Loading...</div>
         </div>
 
-        <!-- God Mode Matrix -->
-        <div class="matrix-container">
-            <div class="matrix-title">GOD MODE ALIGNMENT</div>
-            <div class="matrix-row">
-                <div id="box-5m" class="matrix-box wait">
-                    <span>5M</span>
-                    <span class="state">...</span>
-                </div>
-                <div id="box-1h" class="matrix-box wait">
-                    <span>1H</span>
-                    <span class="state">...</span>
-                </div>
-                <div id="box-4h" class="matrix-box wait">
-                    <span>4H</span>
-                    <span class="state">...</span>
-                </div>
-            </div>
-            <div id="align-text" class="align-text">LOADING...</div>
-        </div>
-
-        <!-- Timeframes -->
-        <div class="tf-container">
-            <button class="tf-btn" onclick="setTF('1m')">1m</button>
-            <button class="tf-btn active" onclick="setTF('5m')">5m</button>
-            <button class="tf-btn" onclick="setTF('15m')">15m</button>
-            <button class="tf-btn" onclick="setTF('1H')">1H</button>
-            <button class="tf-btn" onclick="setTF('4H')">4H</button>
-            <button class="tf-btn" onclick="setTF('1D')">1D</button>
-            <button class="tf-btn" onclick="setTF('1W')">1W</button>
-        </div>
-
+        <div style="text-align: center; margin-bottom: 10px; font-size: 0.9rem; color: var(--text-muted);">CURRENT SIGNAL</div>
         <div id="signal-box" class="signal-box signal-wait">
-            INITIALIZING...
+            WAIT
         </div>
 
-        <div class="card">
-            <div class="row">
-                <span class="label">BUY CONFIDENCE</span>
-                <span id="prob-buy-text" class="value green">0%</span>
-            </div>
-            <div class="prob-bar-container">
-                <div id="bar-buy" class="prob-bar prob-buy" style="width: 0%"></div>
-            </div>
+        <div style="text-align: center; margin-bottom: 10px; font-size: 0.9rem; color: var(--text-muted);">NEXT TIMEFRAME FORECAST</div>
+        <div id="forecast-box" class="signal-box signal-wait" style="font-size: 1.8rem; padding: 15px; border-style: dashed;">
+            WAIT
+        </div>
 
-            <div class="row" style="margin-top: 15px;">
-                <span class="label">SELL CONFIDENCE</span>
-                <span id="prob-sell-text" class="value red">0%</span>
+        <!-- Exness Calculation Levels -->
+        <div class="levels-container">
+            <div class="level-card">
+                <div class="level-title">TAKE PROFIT (TP)</div>
+                <div id="tp-price" class="level-price" style="color: #3fb950;">---</div>
             </div>
-            <div class="prob-bar-container">
-                <div id="bar-sell" class="prob-bar prob-sell" style="width: 0%"></div>
+            <div class="level-card">
+                <div class="level-title">STOP LOSS (SL)</div>
+                <div id="sl-price" class="level-price" style="color: #f85149;">---</div>
             </div>
         </div>
 
-        <div class="card">
-            <div class="row">
-                <span class="label">REGIME</span>
-                <span id="regime-text" class="value">Loading...</span>
+        <!-- Technicals -->
+        <div class="tech-grid">
+            <div class="tech-box">
+                <span class="tech-label">Trend (200 EMA)</span>
+                <span id="trend-val" class="tech-value">...</span>
             </div>
-            <div class="row">
-                <span class="label">BIAS STRENGTH</span>
-                <span id="bias-text" class="value">...</span>
+            <div class="tech-box">
+                <span class="tech-label">RSI (14)</span>
+                <span id="rsi-val" class="tech-value">...</span>
             </div>
-            <div class="row" style="margin-top: 10px;">
-                <span class="label">DXY (Dol) Speed</span>
-                <span id="dxy-delta" class="value">...</span>
+            <div class="tech-box">
+                <span class="tech-label">Big Money (VSA)</span>
+                <span id="vsa-val" class="tech-value">...</span>
             </div>
-            <div class="row" style="margin-top: 10px;">
-                <span class="label">Gold Snapshot</span>
-                <span id="gold-price" class="value">...</span>
+            <div class="tech-box">
+                <span class="tech-label">Expansion</span>
+                <span id="expansion-val" class="tech-value">...</span>
+            </div>
+            <div class="tech-box">
+                <span class="tech-label">Buy Conf</span>
+                <span id="buy-conf" class="tech-value">0%</span>
+            </div>
+            <div class="tech-box">
+                <span class="tech-label">Sell Conf</span>
+                <span id="sell-conf" class="tech-value">0%</span>
             </div>
         </div>
 
         <div class="loader">
-            Auto-updating every ~1s... <span id="last-update"></span>
+            Market Data: Yahoo Finance (Institutional Feed) <br>
+            Last Update: <span id="last-update">...</span>
         </div>
 
     </div>
 
     <script>
-        let currentTF = '5m';
-
-        function setTF(tf) {
-            currentTF = tf;
-            // Update Buttons
-            document.querySelectorAll('.tf-btn').forEach(btn => {
-                btn.classList.remove('active');
-                if (btn.innerText === tf) btn.classList.add('active');
-            });
-            // Force Refresh
-            document.getElementById('signal-box').innerText = "Loading...";
-            fetchData();
-        }
-
         async function fetchData() {
             try {
-                const response = await fetch(`/api/status?interval=${currentTF}`);
+                const response = await fetch('/api/status?interval=5m');
                 const data = await response.json();
                 updateUI(data);
             } catch (error) {
-                console.error('Error fetching data:', error);
+                console.error(error);
+                document.getElementById('signal-box').innerText = "OFFLINE";
             }
-        }
-
-        function updateMatrixBox(id, signal) {
-            const el = document.getElementById(id);
-            const state = el.querySelector('.state');
-
-            el.className = 'matrix-box'; // Reset
-            let shortSig = "WAIT";
-            if (signal.includes("BUY")) {
-                el.classList.add("buy");
-                shortSig = "BUY";
-            } else if (signal.includes("SELL")) {
-                el.classList.add("sell");
-                shortSig = "SELL";
-            } else {
-                el.classList.add("wait");
-                shortSig = "WAIT";
-            }
-            // If locked
-            if (signal.includes("LOCKED")) shortSig = "LOCK";
-
-            state.innerText = shortSig;
         }
 
         function updateUI(data) {
-            document.getElementById('session-tag').innerText = `🌍 ${data.session.name} (Dubai Time)`;
+            const eng = data.engine;
 
-            // Matrix Update
-            if (data.matrix) {
-                updateMatrixBox('box-5m', data.matrix.slots['5m']);
-                updateMatrixBox('box-1h', data.matrix.slots['1H']);
-                updateMatrixBox('box-4h', data.matrix.slots['4H']);
-                document.getElementById('align-text').innerText = data.matrix.alignment;
+            // 1. Session
+            document.getElementById('session-tag').innerText = `🌍 ${data.session.name}`;
+
+            // 2. Signal Box
+            const box = document.getElementById('signal-box');
+            box.innerText = eng.signal;
+            box.className = 'signal-box';
+
+            const fBox = document.getElementById('forecast-box');
+            fBox.innerText = eng.forecast;
+            fBox.className = 'signal-box';
+
+            if (eng.signal === "BUY") {
+                box.classList.add('signal-buy');
+            } else if (eng.signal === "SELL") {
+                box.classList.add('signal-sell');
+            } else {
+                box.classList.add('signal-wait');
             }
 
-            const signalBox = document.getElementById('signal-box');
-            const sig = data.engine.signal;
-            signalBox.innerText = sig;
-            signalBox.className = 'signal-box';
+            if (eng.forecast === "BUY") {
+                fBox.classList.add('signal-buy');
+                fBox.style.borderStyle = "dashed";
+            } else if (eng.forecast === "SELL") {
+                fBox.classList.add('signal-sell');
+                fBox.style.borderStyle = "dashed";
+            } else {
+                fBox.classList.add('signal-wait');
+                fBox.style.borderStyle = "dashed";
+            }
 
-            if (sig.includes('BUY')) signalBox.classList.add('signal-buy');
-            else if (sig.includes('SELL')) signalBox.classList.add('signal-sell');
-            else signalBox.classList.add('signal-wait');
+            // 3. Exness Levels
+            const tpEl = document.getElementById('tp-price');
+            const slEl = document.getElementById('sl-price');
 
-            const buyP = data.engine.probs.buy;
-            const sellP = data.engine.probs.sell;
+            if (eng.levels && eng.levels.tp > 0) {
+                tpEl.innerText = eng.levels.tp;
+                slEl.innerText = eng.levels.sl;
+            } else {
+                tpEl.innerText = "---";
+                slEl.innerText = "---";
+            }
 
-            document.getElementById('prob-buy-text').innerText = buyP + '%';
-            document.getElementById('bar-buy').style.width = buyP + '%';
+            // 4. Technicals
+            const trendEl = document.getElementById('trend-val');
+            trendEl.innerText = eng.trend;
+            trendEl.className = 'tech-value ' + (eng.trend === 'BULLISH' ? 'bullish' : (eng.trend === 'BEARISH' ? 'bearish' : ''));
 
-            document.getElementById('prob-sell-text').innerText = sellP + '%';
-            document.getElementById('bar-sell').style.width = sellP + '%';
+            const rsiEl = document.getElementById('rsi-val');
+            rsiEl.innerText = eng.rsi;
+            // RSI Color
+            if (eng.rsi > 58) rsiEl.className = 'tech-value bullish';
+            else if (eng.rsi < 42) rsiEl.className = 'tech-value bearish';
+            else rsiEl.className = 'tech-value';
 
-            // New Regex/Lock Logic
-            const lockStatus = data.engine.lock ? "🔒 LOCKED" : "🔓 OPEN";
-            document.getElementById('regime-text').innerText = `${data.engine.regime} ${lockStatus}`;
+            document.getElementById('buy-conf').innerText = eng.probs.buy + '%';
+            document.getElementById('sell-conf').innerText = eng.probs.sell + '%';
 
-            // Bias Strength logic from Level-5+ formatted report scan or manual logic check
-            // Since API doesn't send "bias_strength" explicit key in JSON (only in formatted_report string), 
-            // we can parse it or just infer from score.
-            let bias = "Weak";
-            if (buyP > 75 || sellP > 75) bias = "Strong";
-            else if (buyP > 65 || sellP > 65) bias = "Moderate";
-            document.getElementById('bias-text').innerText = bias;
+            // 5. Level 7+ Institutional Indicators
+            const vsaEl = document.getElementById('vsa-val');
+            vsaEl.innerText = eng.vsa;
+            vsaEl.className = 'tech-value ' + (eng.vsa.includes('BIG') ? 'bullish' : '');
 
-            const dxyD = data.engine.data.dxy_delta;
-            const dxyEl = document.getElementById('dxy-delta');
-            dxyEl.innerText = (dxyD > 0 ? '+' : '') + dxyD;
-            dxyEl.className = 'value ' + (dxyD < 0 ? 'green' : 'red');
+            const expEl = document.getElementById('expansion-val');
+            expEl.innerText = eng.expansion;
+            expEl.className = 'tech-value ' + (eng.expansion === 'HIGH' ? 'bullish' : '');
 
-            document.getElementById('gold-price').innerText = data.engine.data.gold;
             document.getElementById('last-update').innerText = data.timestamp;
         }
 
-        // Interval
         fetchData();
-        setInterval(fetchData, 1100); 
+        setInterval(fetchData, 2000);
     </script>
-
 </body>
 
 </html>

@@ -1,12 +1,14 @@
 from flask import Flask, jsonify, request
 from datetime import datetime
 import yfinance as yf
+import pandas as pd
+import numpy as np
 import traceback
 
 app = Flask(__name__)
 
 # ==============================================================================
-# 🧠 LEVEL-4+ REAL LIVE GOLD ENGINE (MULTI-TIMEFRAME)
+# 🚀 LEVEL-7+ "PURE INSTITUTIONAL" ENGINE (ULTIMATE PERFORMANCE)
 # ==============================================================================
 
 def get_session_profile_dubai():
@@ -14,298 +16,210 @@ def get_session_profile_dubai():
     utc_hour = datetime.utcnow().hour
     dubai_hour = (utc_hour + 4) % 24
     
-    # Dubai Time Logic
-    # 02:00 - 12:00: Asian (Low Vol)
-    # 12:00 - 17:00: London (Breakout)
-    # 17:00 - 21:00: OVERLAP (London/NY) -> STRONGEST
-    # 21:00 - 22:00: NY remainder (Volatile)
-    # 22:00+: Late NY (Fade)
-
     if 2 <= dubai_hour < 12: return "ASIAN (RANGE)", 0.7 
     if 12 <= dubai_hour < 17: return "LONDON (BREAKOUT)", 1.2
     if 17 <= dubai_hour < 21: return "OVERLAP (STRONGEST)", 1.6 
     if 21 <= dubai_hour < 23: return "NY (VOLATILE)", 1.4
     return "LATE NY (FADE)", 0.9
 
+def calculate_technicals(df):
+    """
+    Calculates Level-7 Institutional Indicators (VSA + Smart Money).
+    """
+    try:
+        if len(df) < 200:
+            return None 
+            
+        # 1. EMAs (Institutional Trends)
+        df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+        df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+        
+        # 2. RSI (Momentum Filter)
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss.replace(0, 0.001)
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # 3. ATR (Volatility for Exness Levels)
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        df['ATR'] = true_range.rolling(14).mean()
+
+        # 4. VSA (Volume Spread Analysis) - Looking for Big Money
+        df['Vol_Avg'] = df['Volume'].rolling(20).mean()
+        df['VSA_Spike'] = df['Volume'] > (df['Vol_Avg'] * 1.5)
+        
+        # 5. Smart Money Expansion (Order Blocks)
+        df['Body'] = (df['Close'] - df['Open']).abs()
+        df['Range'] = df['High'] - df['Low']
+        df['Is_Expansion'] = df['Body'] > (df['Range'].rolling(50).mean() * 1.8)
+
+        return df
+    except Exception as e:
+        print(f"Technical Calc Error: {e}")
+        return None
+
 def fetch_live_data(interval):
     """
-    Fetches REAL market data from Yahoo Finance.
-    Keeps 20 candles for Acceleration & Correlation logic.
+    Fetches REAL market data.
     """
     try:
         yf_interval = interval
-        period = "5d" # Default larger period for context
+        period = "60d" 
         
-        # Adaptation for periods
-        if interval == "1m": period = "1d"
-        elif interval == "5m": period = "5d"
-        elif interval == "15m": period = "5d"
-        elif interval == "1h": period = "1mo"
-        elif interval == "4h": yf_interval = "1h"; period = "3mo" 
-        elif interval == "1d": period = "1y"
-        elif interval == "1wk": period = "2y"
+        if interval == "1m": period = "5d"
+        elif interval == "5m": period = "60d"
+        elif interval == "15m": period = "60d"
+        elif interval == "1h": period = "1y"
+        elif interval == "1d": period = "2y"
 
         tickers = ["GC=F", "DX-Y.NYB", "^TNX"]
+        data = yf.download(tickers, period=period, interval=yf_interval, progress=False, group_by='ticker')
         
-        data = yf.download(tickers, period=period, interval=yf_interval, progress=False)
+        response = {}
+        if "GC=F" in data:
+            gold_df = data["GC=F"].copy().dropna()
+            gold_df = calculate_technicals(gold_df)
+            response["GOLD_DF"] = gold_df
+            response["GOLD_PRICE"] = gold_df['Close'].iloc[-1] if gold_df is not None else 0
 
-        prices = {"GOLD": [], "DXY": [], "US10Y": []}
-        
-        # Get last 20 valid data points
-        df = data['Close'].tail(21) # Need 21 to get 20 deltas if needed, safe buffer
-        
-        for index, row in df.iterrows():
-            g = row.get('GC=F'); d = row.get('DX-Y.NYB'); u = row.get('^TNX')
-            if g and g > 0: prices["GOLD"].append(float(g))
-            if d and d > 0: prices["DXY"].append(float(d))
-            if u and u > 0: prices["US10Y"].append(float(u))
+        if "DX-Y.NYB" in data:
+            response["DXY_SERIES"] = data["DX-Y.NYB"]['Close'].dropna().tail(21).values
+        else: response["DXY_SERIES"] = []
 
-        if len(prices["GOLD"]) < 5:
-             return generate_simulation_snapshot(0.1)
-
-        return prices
+        return response
     except Exception as e:
         print(f"Data Fetch Error: {e}")
-        return generate_simulation_snapshot(0.1)
+        return None
 
-def generate_simulation_snapshot(vol_mult):
-    import random
-    gold_base = 2500.0; dxy_base = 102.5; yield_base = 4.05
-    prices = {"GOLD": [], "DXY": [], "US10Y": []}
-    for i in range(20):
-        prices["GOLD"].append(gold_base + random.uniform(-1, 1))
-        prices["DXY"].append(dxy_base + random.uniform(-0.05, 0.05))
-        prices["US10Y"].append(yield_base + random.uniform(-0.01, 0.01))
-    return prices
-
-def calculate_std(values):
-    """Simple standard deviation clone"""
-    if len(values) < 2: return 0
-    mean = sum(values) / len(values)
-    variance = sum((x - mean) ** 2 for x in values) / len(values)
-    return variance ** 0.5
-
-def calculate_logic(prices, session_name, session_vol):
+def calculate_logic(data_pack, session_name, session_vol):
     """
-    LEVEL-5+ INSTITUTIONAL ENGINE
-    Specs: Acceleration, Correlation Check, Stop-Hunt Filter, Yield Dominance.
+    LEVEL-7+ INSTITUTIONAL ENGINE
+    Specs: VSA Confirmation, Smart Money Expansion, Trend & Momentum.
     """
+    if not data_pack or "GOLD_DF" not in data_pack or data_pack["GOLD_DF"] is None:
+         return {"signal": "WAIT", "formatted_report": "System Offline", "lock": True}
     
-    # Basic Validation
-    if len(prices["GOLD"]) < 5: return {"signal": "WAIT", "formatted_report": "Not enough data"}
+    df = data_pack["GOLD_DF"]
+    dxy_series = data_pack["DXY_SERIES"]
     
-    # --- 1. DATA PREP & METRICS ---
-    # Current Prices
-    gold_now = prices["GOLD"][-1]; gold_prev = prices["GOLD"][-2]
-    dxy_now = prices["DXY"][-1]; dxy_prev = prices["DXY"][-2]
-    u10_now = prices["US10Y"][-1]; u10_prev = prices["US10Y"][-2]
+    current = df.iloc[-1]
+    price = current['Close']
     
-    # Deltas (Momentum)
-    gold_delta = gold_now - gold_prev
-    dxy_delta = dxy_now - dxy_prev
-    yield_delta = u10_now - u10_prev
+    # --- A. INSTITUTIONAL TREND ---
+    ema200 = current['EMA_200']
+    ema50 = current['EMA_50']
+    ema21 = current['EMA_21']
+    trend = "NEUTRAL"
+    if price > ema200 and ema21 > ema50: trend = "BULLISH"
+    elif price < ema200 and ema21 < ema50: trend = "BEARISH"
     
-    # Acceleration (Delta - Prev Delta)
-    gold_acc = gold_delta - (gold_prev - prices["GOLD"][-3])
-    dxy_acc = dxy_delta - (dxy_prev - prices["DXY"][-3])
-    yield_acc = yield_delta - (u10_prev - prices["US10Y"][-3])
+    # --- B. VSA & MOMENTUM ---
+    vsa_confirm = current['VSA_Spike']
+    is_expansion = current['Is_Expansion']
+    rsi = current['RSI']
     
-    # Volatility / Std Dev (Last 10 candles)
-    gold_std = calculate_std(prices["GOLD"][-10:])
-    dxy_std = calculate_std(prices["DXY"][-10:])
-    yield_std = calculate_std(prices["US10Y"][-10:])
-    
-    # Correlation (Directional Agreement Last 10)
-    # Inverse is GOOD (Gold Up, DXY Down). Same direction is BAD.
-    inverse_count = 0
-    total_checks = 0
-    subset_len = min(len(prices["GOLD"]), 10)
-    for i in range(1, subset_len):
-        g_chg = prices["GOLD"][-i] - prices["GOLD"][-(i+1)]
-        d_chg = prices["DXY"][-i] - prices["DXY"][-(i+1)]
-        if (g_chg > 0 and d_chg < 0) or (g_chg < 0 and d_chg > 0):
-            inverse_count += 1
-        total_checks += 1
-        
-    inverse_ratio = inverse_count / max(1, total_checks)
-    correlation_status = "NORMAL"
-    if inverse_ratio <= 0.4: correlation_status = "BROKEN" # Moving together too much
-    
-    # --- 2. SAFETY FILTERS (HARD BLOCKS) ---
+    # --- C. CORRELATION & SAFETY ---
     lock_reason = None
     is_locked = False
-    
-    # A. Volatility Lock (News Shock)
-    # Threshold: DXY move > 2x Std Dev (Statistical Shock) or user fixed 0.2 approx
-    shock_threshold = 2.0 * dxy_std if dxy_std > 0.02 else 0.15 * session_vol
-    if abs(dxy_delta) > shock_threshold:
-        is_locked = True
-        lock_reason = "VOLATILITY SHOCK"
-        
-    # B. Stop-Hunt Detector
-    # Gold moves fast (>1.5 std), DXY & Yields asleep (<0.2 std OR < 0.02 absolute min)
-    if not is_locked:
-        # Use simple epsilon to handle flat markets (std=0) or low volatility
-        dxy_limit = max(0.2 * dxy_std, 0.02)
-        yield_limit = max(0.2 * yield_std, 0.01)
-        
-        if (abs(gold_delta) > 1.5 * gold_std) and (abs(dxy_delta) < dxy_limit) and (abs(yield_delta) < yield_limit):
+    if len(dxy_series) > 10:
+        d_delta = abs(dxy_series[-1] - dxy_series[-2])
+        if d_delta > 0.15: 
             is_locked = True
-            lock_reason = "STOP-HUNT DETECTED"
+            lock_reason = "VOLATILITY SHOCK"
             
-    # C. Correlation Broken
-    if not is_locked and correlation_status == "BROKEN":
-        is_locked = True
-        lock_reason = "CORRELATION BROKEN"
-
-    # --- 3. SCORING & INTER-MARKET LOGIC ---
-    score = 50.0
+    # --- D. SCORING ENGINE (Level 7) ---
+    score = 50
+    if trend == "BULLISH": score += 20
+    elif trend == "BEARISH": score -= 20
     
-    # 3.1 Base Momentum (Gold)
-    score += gold_delta * 0.6 # Boosted slightly for trend
-    if (gold_delta > 0 and gold_acc > 0) or (gold_delta < 0 and gold_acc < 0):
-        # Acceleration confirming direction
-        score += (gold_acc * 0.2)
+    if vsa_confirm:
+        if current['Close'] > current['Open']: score += 10
+        else: score -= 10
         
-    # 3.2 Inter-Market (DXY & Yields)
-    # Standard weighting
-    score += (dxy_delta * -60) # Stronger DXY Impact
-    score += (yield_delta * -100) # Yield dominance
+    if is_expansion:
+        if current['Close'] > current['Open']: score += 10
+        else: score -= 10
+        
+    if rsi > 58: score += 10
+    elif rsi < 42: score -= 10
     
-    # 3.3 Acceleration Confirmation from Inter-market
-    # If DXY accelerating UP -> Bad for Gold -> Lower score
-    score += (dxy_acc * -20)
-    score += (yield_acc * -40)
+    score = 50 + ((score - 50) * session_vol)
     
-    # 3.4 Session Multiplier
-    deviation = score - 50
-    score = 50 + (deviation * session_vol)
-    score = max(0, min(100, score))
-    
+    # --- E. FINAL SIGNAL & EXNESS LEVELS (SIMPLIFIED) ---
     buy_prob = int(score)
     sell_prob = int(100 - score)
-    
-    # --- 4. FINAL DECISION RULES ---
-    # > 65 BUY, < 35 SELL, else WAIT
-    # Lock Overrides ALL
-    
-    bias_strength = "Weak"
     signal = "WAIT"
+    sl = tp = 0.0
+    atr = current['ATR']
     
     if is_locked:
-        signal = f"WAIT ({lock_reason})" if lock_reason else "WAIT (LOCKED)"
-        # Force probs to neutral visual
-        buy_prob = 50
-        sell_prob = 50
+        signal = "WAIT"
     else:
-        if buy_prob >= 65:
+        # Simplified Decisive Rules
+        if buy_prob >= 65 and trend == "BULLISH":
             signal = "BUY"
-            bias_strength = "Strong" if buy_prob > 75 else "Moderate"
-        elif sell_prob >= 65: # means score <= 35
+            sl = price - (1.5 * atr)
+            tp = price + (3.0 * atr) 
+        elif sell_prob >= 65 and trend == "BEARISH":
             signal = "SELL"
-            bias_strength = "Strong" if sell_prob > 75 else "Moderate"
+            sl = price + (1.5 * atr)
+            tp = price - (3.0 * atr)
         else:
             signal = "WAIT"
-            bias_strength = "Weak"
-
-    # Formatted Output
-    formatted_output = f"""
-Signal: {signal}
-Confidence: {buy_prob if buy_prob > 50 else sell_prob}%
-Session: {session_name}
-Bias Strength: {bias_strength}
-Lock: {'ON' if is_locked else 'OFF'}
-"""
+            
+    # --- F. PREDICTIVE FORECAST (SIMPLIFIED) ---
+    forecast = "WAIT"
+    if signal == "BUY":
+        forecast = "BUY"
+    elif signal == "SELL":
+        forecast = "SELL"
+    else:
+        forecast = "WAIT"
 
     return {
         "signal": signal,
+        "forecast": forecast,
         "probs": {"buy": buy_prob, "sell": sell_prob},
-        "regime": "Level-5+", # Placeholder or calculated if needed
+        "trend": trend,
+        "rsi": round(rsi, 1),
+        "vsa": "BIG MONEY" if vsa_confirm else "NORMAL",
+        "expansion": "HIGH" if is_expansion else "LOW",
         "lock": is_locked,
-        "formatted_report": formatted_output,
+        "levels": {
+            "sl": round(sl, 2) if sl != 0 else 0,
+            "tp": round(tp, 2) if tp != 0 else 0
+        },
         "data": {
-            "dxy": round(dxy_now, 2), "dxy_delta": round(dxy_delta, 3),
-            "gold": round(gold_now, 2), "gold_delta": round(gold_delta, 2),
-            "us10y": round(u10_now, 2)
+            "gold": round(price, 2),
+            "ema200": round(ema200, 2)
         }
     }
 
 @app.route('/api/status', methods=['GET'])
 def home():
-    # Get Timeframe from URL (default 5m) for the Main Display
     tf = request.args.get('interval', '5m')
-    
-    # Validation Map
-    valid_map = {
-        "1m": "1m", "5m": "5m", "15m": "15m", 
-        "1H": "1h", "1h": "1h",
-        "4H": "1h", # Fallback 4H -> 1H logic usually, but here we might want actual 1H data representing "Higher Timeframe"
-        "1D": "1d", "1d": "1d",
-        "1W": "1wk", "1wk": "1wk"
-    }
-    yf_tf_main = valid_map.get(tf, "5m")
+    valid_map = {"1m": "1m", "5m": "5m", "15m": "15m", "1H": "1h", "4H": "1h", "1D": "1d"}
+    yf_tf = valid_map.get(tf, "5m")
     
     session_name, vol_mult = get_session_profile_dubai()
-    
-    # --- GOD MODE: Fetch 3 Contexts ---
-    # We need 5m, 1H, and 4H (simulated or real) logic
-    # To keep it fast, we fetch them linearly. 
-    
-    # 1. Main Context (The one user asked for)
-    prices_main = fetch_live_data(yf_tf_main)
-    intel_main = calculate_logic(prices_main, session_name, vol_mult)
-    
-    # 2. Hardcoded Contexts for Matrix (5m, 1H, 4H)
-    # We only fetch if main isn't already covering it to save time
-    matrix = {}
-    
-    # Define the 3 matrix slots
-    slots = ["5m", "1H", "4H"]
-    offset_map = {"5m": "5m", "1H": "1h", "4H": "1h"} # Map 4H to 1h data (approx) if yfinance 4h is unavailable or unstable
-    
-    alignment_score = 0
-    signals = []
-    
-    for slot in slots:
-        yf_s = offset_map[slot]
-        
-        # Optimization: If main context is same, reuse result
-        if yf_tf_main == yf_s and tf == slot:
-            res = intel_main
-        else:
-            # Fetch separate
-            p = fetch_live_data(yf_s)
-            res = calculate_logic(p, session_name, vol_mult)
-            
-        matrix[slot] = res["signal"]
-        
-        # Alignment Calculation
-        sig = res["signal"]
-        if "BUY" in sig: alignment_score += 1
-        elif "SELL" in sig: alignment_score -= 1
-        signals.append(sig)
-
-    # Determine Alignment Status
-    # 3/3 Agreement -> GOD MODE
-    align_text = "MIXED"
-    if alignment_score == 3: align_text = "🚀 FULL BUY ALIGNMENT"
-    elif alignment_score == -3: align_text = "🔻 FULL SELL ALIGNMENT"
-    elif alignment_score == 2: align_text = "✅ PARTIAL BUY"
-    elif alignment_score == -2: align_text = "⚠️ PARTIAL SELL"
+    data_pack = fetch_live_data(yf_tf)
+    intel = calculate_logic(data_pack, session_name, vol_mult)
     
     response = {
         "timestamp": datetime.now().strftime("%H:%M:%S UTC"),
-        "timeframe": tf,
-        "session": {"name": session_name, "volatility": vol_mult},
-        "engine": intel_main,
-        "matrix": {
-            "slots": matrix,
-            "alignment": align_text
-        }
+        "session": {"name": session_name},
+        "engine": intel
     }
     
     resp = jsonify(response)
     resp.headers['Access-Control-Allow-Origin'] = '*'
-    resp.headers['Cache-Control'] = 's-maxage=1, stale-while-revalidate'
     return resp
 
+if __name__ == "__main__":
+    app.run(debug=True)
