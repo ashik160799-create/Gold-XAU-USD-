@@ -285,10 +285,27 @@ def analyze_timeframe(tf, df):
     # Merge reasons for detail if needed, but keep short for UI
     final_desc = ", ".join(desc_parts)
 
+    # --- FORECAST GENERATION (Predict what is coming next) ---
+    forecast = "Neutral / Wait"
+    
+    # Strong Signals
+    if score >= 75: forecast = "🚀 Strong Bullish Continuation"
+    elif score <= 25: forecast = "🔻 Strong Bearish Drop"
+    
+    # Moderate Signals
+    elif score >= 60: forecast = "↗️ Bullish Bias (Buy Dips)"
+    elif score <= 40: forecast = "↘️ Bearish Bias (Sell Rallies)"
+    
+    # Range / Neutral
+    else:
+        if bb_width < prev_bb_width * 0.9: forecast = "🛑 Squeeze (Breakout Soon)"
+        else: forecast = "➡️ Choppy / Consolidation"
+
     return {
         "timeframe": tf.upper(),
         "signal": signal,
         "description": final_desc,
+        "forecast": forecast,
         "score": score,
         "raw_signal": color # For UI styling
     }

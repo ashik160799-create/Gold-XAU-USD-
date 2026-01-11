@@ -170,7 +170,7 @@
                     <tr>
                         <th class="tf-col">Timeframe</th>
                         <th class="sig-col">Signal</th>
-                        <th class="desc-col">Analysis & Logic</th>
+                        <th class="desc-col">AI Prediction & Insight</th>
                     </tr>
                 </thead>
                 <tbody id="signal-table">
@@ -233,6 +233,7 @@
                         <span class="signal-badge ${sigClass}">${item.signal}</span>
                     </td>
                     <td class="desc-col">
+                        <div style="font-weight: bold; color: #fff; margin-bottom: 2px;">${item.forecast || ''}</div>
                         ${item.description}
                     </td>
                 `;
