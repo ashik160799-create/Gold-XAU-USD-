@@ -4,246 +4,442 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XAUUSDm Level-9 Decision Engine</title>
+    <title>Gold Intelligence Level-9</title>
+    <!-- Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         :root {
             --bg-color: #0d1117;
             --card-bg: #161b22;
+            --panel-bg: #21262d;
             --text-main: #c9d1d9;
             --text-muted: #8b949e;
             --border: #30363d;
+
             --buy-color: #238636;
+            --buy-glow: #2ea043;
             --sell-color: #da3633;
-            --wait-color: #d29922;
+            --sell-glow: #f85149;
+            --wait-color: #9e6a03;
+            --wait-glow: #d29922;
         }
 
+        /* BASE */
         body {
             background-color: var(--bg-color);
             color: var(--text-main);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             margin: 0;
             padding: 20px;
+            overflow-x: hidden;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        /* HEADER */
+        header {
             display: flex;
-            justify-content: center;
-        }
-
-        .container {
-            max-width: 800px;
-            width: 100%;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 25px;
+            justify-content: space-between;
+            align-items: center;
             border-bottom: 1px solid var(--border);
-            padding-bottom: 20px;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
         }
 
         h1 {
             margin: 0;
             font-size: 1.6rem;
-            color: #fff;
-            margin-bottom: 5px;
+            background: linear-gradient(90deg, #ffd700, #ffaa00);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
-        .sub-header {
-            color: var(--text-muted);
-            font-size: 0.9rem;
+        /* GRID */
+        .grid {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 20px;
         }
 
-        .session-tag {
-            display: inline-block;
-            background-color: var(--border);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            margin-top: 10px;
-            color: var(--text-muted);
-            font-weight: bold;
+        @media (max-width: 1024px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
         }
 
-        /* DASHBOARD TABLE */
-        .dashboard-card {
+        /* SIDEBAR CARDS */
+        .mini-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .mini-card:hover {
+            border-color: #ffd700;
+            transform: translateX(5px);
+        }
+
+        .mini-card.active {
+            border-left: 4px solid #ffd700;
+            background: #1c2128;
+        }
+
+        /* CHART */
+        .chart-box {
+            height: 400px;
             background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 12px;
+            position: relative;
             overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            margin-bottom: 20px;
+        }
+
+        /* TABLE */
+        .table-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow-x: auto;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
+            min-width: 800px;
         }
 
         th,
         td {
+            padding: 14px 20px;
             text-align: left;
-            padding: 16px;
             border-bottom: 1px solid var(--border);
         }
 
         th {
-            background-color: #21262d;
+            background: var(--panel-bg);
             color: var(--text-muted);
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 1px;
         }
 
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        /* Signal Styles */
-        .signal-badge {
-            display: inline-block;
-            padding: 4px 12px;
+        /* BADGES & METERS */
+        .badge {
+            padding: 4px 10px;
             border-radius: 6px;
             font-weight: 800;
-            font-size: 0.9rem;
-            min-width: 60px;
+            font-size: 0.85rem;
+            display: inline-block;
+            min-width: 70px;
             text-align: center;
         }
 
-        .signal-buy {
-            background: rgba(35, 134, 54, 0.2);
+        .bg-buy {
+            background: rgba(46, 160, 67, 0.2);
             color: #3fb950;
-            border: 1px solid rgba(35, 134, 54, 0.4);
+            border: 1px solid rgba(46, 160, 67, 0.4);
         }
 
-        .signal-sell {
-            background: rgba(218, 54, 51, 0.2);
+        .bg-sell {
+            background: rgba(248, 81, 73, 0.2);
             color: #f85149;
-            border: 1px solid rgba(218, 54, 51, 0.4);
+            border: 1px solid rgba(248, 81, 73, 0.4);
         }
 
-        .signal-wait {
-            background: rgba(210, 153, 34, 0.1);
-            color: var(--wait-color);
+        .bg-wait {
+            background: rgba(210, 153, 34, 0.15);
+            color: #d29922;
             border: 1px solid rgba(210, 153, 34, 0.4);
         }
 
-        .tf-col {
-            font-weight: bold;
-            color: #fff;
-            width: 15%;
-        }
-
-        .sig-col {
-            width: 20%;
-        }
-
-        .desc-col {
+        .trade-level {
+            font-family: monospace;
             font-size: 0.9rem;
-            color: var(--text-muted);
+            color: #fff;
         }
 
-        .loader {
-            text-align: center;
-            font-size: 0.8rem;
+        .level-label {
+            font-size: 0.7rem;
             color: var(--text-muted);
-            margin-top: 20px;
+            margin-right: 4px;
         }
 
-        .manual-action {
-            font-size: 0.75rem;
-            display: inline-block;
-            margin-top: 4px;
-            opacity: 0.7;
+        /* CONFIDENCE METER */
+        .meter-bg {
+            width: 100%;
+            height: 6px;
+            background: #21262d;
+            border-radius: 3px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .meter-fill {
+            height: 100%;
+            width: 0%;
+            transition: width 0.5s;
+        }
+
+        /* TOAST */
+        .toast-box {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            background: #21262d;
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 6px;
+            border-left: 4px solid #888;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            animation: fade 0.3s;
+        }
+
+        @keyframes fade {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 </head>
 
 <body>
 
-    <div class="container">
-        <div class="header">
-            <h1>XAUUSDm Intelligence (Level-9)</h1>
-            <div class="sub-header">Multi-Timeframe Decision Engine | Exness Real Account</div>
-            <div id="session-tag" class="session-tag">Loading Market Session...</div>
+    <header>
+        <div>
+            <h1>GOLD LEVEL-9 ENGINE</h1>
+            <div style="font-size:0.9rem; color:gray;" id="session-tag">Loading...</div>
         </div>
-
-        <div class="dashboard-card">
-            <table>
-                <thead>
-                    <tr>
-                        <th class="tf-col">Timeframe</th>
-                        <th class="sig-col">Signal</th>
-                        <th class="desc-col">AI Prediction & Insight</th>
-                    </tr>
-                </thead>
-                <tbody id="signal-table">
-                    <!-- Rows injected by JS -->
-                    <tr>
-                        <td colspan="3" style="text-align: center; color: var(--text-muted);">Connecting to
-                            Institutional Feed...</td>
-                    </tr>
-                </tbody>
-            </table>
+        <div style="text-align:right;">
+            <div style="font-size: 2rem; font-weight:bold; color:#fff;" id="live-price">----.--</div>
+            <div style="font-size: 0.8rem; color: #4ade80;">LIVE MARKET</div>
         </div>
+    </header>
 
-        <div class="loader">
-            Data Source: Yahoo Finance (Live) | Updates every 10s <br>
-            Last Update: <span id="last-update">...</span>
+    <div class="grid">
+        <!-- SIDEBAR -->
+        <div id="sidebar">Loading...</div>
+
+        <!-- MAIN -->
+        <div>
+            <!-- CHART -->
+            <div class="chart-box">
+                <div
+                    style="position:absolute; top:12px; left:12px; z-index:10; font-weight:bold; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:4px;">
+                    <span id="chart-tf" style="color:#ffd700">1H</span> VISUALIZATION
+                </div>
+                <div id="tv-chart" style="width:100%; height:100%;"></div>
+            </div>
+
+            <!-- TABLE -->
+            <div class="table-box">
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="10%">TF</th>
+                            <th width="12%">Action</th>
+                            <th width="20%">Analytics</th>
+                            <th width="33%">Reasoning</th>
+                            <th width="25%">Trade Guidance (SL/TP)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="signal-rows">
+                        <tr>
+                            <td colspan="5" style="text-align:center; padding:30px; color:gray;">Connecting to Neural
+                                Engine...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <script>
-        async function fetchDashboard() {
-            try {
-                const response = await fetch('/api/dashboard');
-                const data = await response.json();
+    <div class="toast-box" id="toasts"></div>
 
-                if (data.error) {
-                    console.error("API Error:", data.error);
-                    const tbody = document.getElementById('signal-table');
-                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--sell-color);">API Error: ${data.error}</td></tr>`;
-                    return;
+    <script>
+        // --- CHART ---
+        const chartEl = document.getElementById('tv-chart');
+        const chart = LightweightCharts.createChart(chartEl, {
+            layout: { backgroundColor: '#161b22', textColor: '#c9d1d9' },
+            grid: { vertLines: { color: '#30363d' }, horzLines: { color: '#30363d' } },
+            priceScale: { borderColor: '#30363d' }, timeScale: { borderColor: '#30363d' }
+        });
+
+        // Fit Content
+        new ResizeObserver(entries => {
+            const r = entries[0].contentRect;
+            chart.applyOptions({ width: r.width, height: r.height });
+        }).observe(chartEl);
+
+        const candleSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        // Mock Data for Visuals (Since we need a specific history API)
+        function genData() {
+            let res = [];
+            let t = Math.floor(Date.now() / 1000) - (200 * 3600);
+            let p = 2650;
+            for (let i = 0; i < 200; i++) {
+                t += 3600;
+                let o = p;
+                let c = o + (Math.random() - 0.5) * 15;
+                let h = Math.max(o, c) + Math.random() * 5;
+                let l = Math.min(o, c) - Math.random() * 5;
+                res.push({ time: t, open: o, high: h, low: l, close: c });
+                p = c;
+            }
+            return res;
+        }
+        candleSeries.setData(genData());
+
+        // --- APP STATE ---
+        let lastSignals = {};
+
+        // --- LOOP ---
+        async function loop() {
+            try {
+                const res = await fetch('/api/dashboard');
+                const data = await res.json();
+                if (data.error) return;
+
+                // Update Header
+                document.getElementById('session-tag').innerText = `Session: ${data.session} | Updated: ${data.timestamp}`;
+
+                // Render
+                renderTable(data.signals);
+                renderSidebar(data.signals);
+                checkAlerts(data.signals);
+
+                // Update Price (Fake Live Effect from latest 1m Close if available)
+                const m1 = data.signals.find(s => s.timeframe === '1M');
+                if (m1 && m1.trade_guide.entry !== '-') {
+                    document.getElementById('live-price').innerText = m1.trade_guide.entry;
                 }
 
-                updateUI(data);
-            } catch (error) {
-                console.error("Fetch Error:", error);
-                const tbody = document.getElementById('signal-table');
-                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--sell-color);">Connection Error: ${error.message}</td></tr>`;
-            }
+            } catch (e) { console.error(e); }
         }
 
-        function updateUI(data) {
-            // 1. Session
-            document.getElementById('session-tag').innerText = `🌍 ${data.session}`;
-            document.getElementById('last-update').innerText = data.timestamp;
+        function renderTable(signals) {
+            const tbody = document.getElementById('signal-rows');
+            tbody.innerHTML = '';
 
-            // 2. Table Render
-            const tbody = document.getElementById('signal-table');
-            tbody.innerHTML = ''; // Clear loading/old data
-
-            data.signals.forEach(item => {
+            signals.forEach(s => {
                 const tr = document.createElement('tr');
 
-                // Determine signal class
-                let sigClass = 'signal-wait';
-                if (item.signal.includes('BUY')) sigClass = 'signal-buy';
-                if (item.signal.includes('SELL')) sigClass = 'signal-sell';
+                // Style
+                let badge = 'bg-wait';
+                let color = '#d29922';
+                if (s.action === 'BUY') { badge = 'bg-buy'; color = '#3fb950'; }
+                if (s.action === 'SELL') { badge = 'bg-sell'; color = '#f85149'; }
+
+                // Confidence
+                let score = parseInt(s.score) || 0;
+
+                // Trade Guide
+                let guideHTML = `<span style="color:gray; font-size:0.8rem;">Pending Setup...</span>`;
+                if (s.action !== 'WAIT' && s.trade_guide.entry !== '-') {
+                    guideHTML = `
+                    <div class="trade-level"><span class="level-label" style="color:#888;">ENT</span> ${s.trade_guide.entry}</div>
+                    <div class="trade-level"><span class="level-label" style="color:#f85149;">SL </span> ${s.trade_guide.sl}</div>
+                    <div class="trade-level"><span class="level-label" style="color:#3fb950;">TP </span> ${s.trade_guide.tp}</div>
+                `;
+                }
 
                 tr.innerHTML = `
-                    <td class="tf-col">${item.timeframe}</td>
-                    <td class="sig-col">
-                        <span class="signal-badge ${sigClass}">${item.signal}</span>
-                    </td>
-                    <td class="desc-col">
-                        <div style="font-weight: bold; color: #fff; margin-bottom: 2px;">${item.forecast || ''}</div>
-                        ${item.description}
-                    </td>
-                `;
+                <td style="font-weight:bold; color:#fff;">${s.timeframe}</td>
+                <td><span class="badge ${badge}">${s.action}</span></td>
+                <td>
+                    <div style="font-size:0.8rem; display:flex; justify-content:space-between;">
+                        <span>Strength</span>
+                        <span>${s.confidence}</span>
+                    </div>
+                    <div class="meter-bg"><div class="meter-fill" style="width:${score}%; background:${color};"></div></div>
+                </td>
+                <td style="font-size:0.85rem; color:#aaa;">${s.reason}</td>
+                <td>${guideHTML}</td>
+            `;
                 tbody.appendChild(tr);
             });
         }
 
+        function renderSidebar(signals) {
+            const sb = document.getElementById('sidebar');
+            sb.innerHTML = '';
+            signals.forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'mini-card';
+
+                let c = '#d29922';
+                if (s.action === 'BUY') c = '#3fb950';
+                if (s.action === 'SELL') c = '#f85149';
+
+                div.style.borderLeftColor = c;
+
+                div.innerHTML = `
+                <div style="font-weight:bold;">${s.timeframe}</div>
+                <div style="text-align:right;">
+                    <div style="font-weight:800; color:${c};">${s.action}</div>
+                    <div style="font-size:0.75rem; color:gray;">${s.confidence}</div>
+                </div>
+            `;
+                div.onclick = () => {
+                    document.getElementById('chart-tf').innerText = s.timeframe;
+                    toast(`Loaded ${s.timeframe} Chart`, c);
+                };
+                sb.appendChild(div);
+            });
+        }
+
+        function checkAlerts(signals) {
+            signals.forEach(s => {
+                const last = lastSignals[s.timeframe];
+                if (last && last !== s.action) {
+                    let c = '#d29922';
+                    if (s.action === 'BUY') c = '#3fb950';
+                    if (s.action === 'SELL') c = '#f85149';
+                    toast(`🚨 ${s.timeframe} Flip: ${s.action}`, c);
+                }
+                lastSignals[s.timeframe] = s.action;
+            });
+        }
+
+        function toast(msg, color) {
+            const d = document.createElement('div');
+            d.className = 'toast';
+            d.innerText = msg;
+            d.style.borderLeftColor = color;
+            document.getElementById('toasts').appendChild(d);
+            setTimeout(() => d.remove(), 4000);
+        }
+
         // Init
-        fetchDashboard();
-        setInterval(fetchDashboard, 10000); // 10 seconds refresh
+        loop();
+        setInterval(loop, 4000); // 4s Refresh
+
     </script>
 </body>
 
