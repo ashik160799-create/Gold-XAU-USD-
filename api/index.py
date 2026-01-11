@@ -1,22 +1,25 @@
 from flask import Flask, jsonify, request
-from datetime import datetime
+from datetime import datetime, timedelta
 import yfinance as yf
+import pandas as pd
+import numpy as np
 import traceback
 
 app = Flask(__name__)
 
 # ==============================================================================
-# 🚀 LEVEL-9 "PURE INSTITUTIONAL" ENGINE (MTA + YIELD CORRELATION)
+# 🚀 LEVEL-9 "DECISION ENGINE" (MULTI-TIMEFRAME + WEIGHTED SCORING)
 # ==============================================================================
+
+TIMEFRAMES = ["1m", "5m", "15m", "1h", "2h", "4h", "1d", "1wk"]
+
+MIN_HISTORY = 100  # Minimum candles required for accurate indicators
 
 def get_session_profile_dubai():
     """Returns session name and volatility multiplier (Dubai UTC+4)."""
     try:
-        if hasattr(datetime, 'utcnow'):
-             utc_hour = datetime.utcnow().hour
-        else:
-             utc_hour = datetime.now().hour # Fallback
-             
+        utc_now = datetime.utcnow()
+        utc_hour = utc_now.hour
         dubai_hour = (utc_hour + 4) % 24
         
         if 2 <= dubai_hour < 12: return "ASIAN (RANGE)", 0.7 
@@ -27,328 +30,216 @@ def get_session_profile_dubai():
     except:
         return "MARKET", 1.0
 
-# --- PURE PYTHON INDICATORS (NO PANDAS) ---
+# --- PANDAS INDICATORS ---
 
-def calculate_ema(prices, period):
-    if len(prices) < period: return 0
-    k = 2 / (period + 1)
-    ema = sum(prices[:period]) / period # Simple AVG for first EMA
-    for price in prices[period:]:
-        ema = (price * k) + (ema * (1 - k))
-    return ema
+def calculate_indicators(df):
+    """Calculates technical indicators on a DataFrame."""
+    if df.empty: return df
 
-def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1: return 50
-    gains = []
-    losses = []
+    # EMA
+    df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['EMA200'] = df['Close'].ewm(span=200, adjust=False).mean()
+
+    # RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # Bollinger Bands
+    df['SMA20'] = df['Close'].rolling(window=20).mean()
+    df['STD20'] = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['SMA20'] + (df['STD20'] * 2)
+    df['BB_Lower'] = df['SMA20'] - (df['STD20'] * 2)
+
+    # ATR
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    df['ATR'] = true_range.rolling(14).mean()
+
+    return df
+
+def fetch_all_timeframes():
+    """Fetches and prepares data for all 8 timeframes."""
+    data_store = {}
     
-    for i in range(1, len(prices)):
-        delta = prices[i] - prices[i-1]
-        if delta > 0:
-            gains.append(delta)
-            losses.append(0)
-        else:
-            gains.append(0)
-            losses.append(abs(delta))
-            
-    # First Average
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
+    # 1. Fetch Standard Timeframes directly
+    # Group 1: Intraday
+    tickers_intraday = yf.download("GC=F", period="5d", interval="1m", progress=False) # 1m
+    tickers_5m = yf.download("GC=F", period="5d", interval="5m", progress=False) # 5m
+    tickers_15m = yf.download("GC=F", period="5d", interval="15m", progress=False) # 15m
     
-    # Wilder's Smoothing
-    for i in range(period, len(prices)-1):
-        delta = prices[i+1] - prices[i]
-        gain = delta if delta > 0 else 0
-        loss = abs(delta) if delta < 0 else 0
+    # Group 2: Hourly/Swing (Source for 2H/4H)
+    tickers_1h = yf.download("GC=F", period="1y", interval="1h", progress=False) # 1h
+    
+    # Group 3: Daily/Weekly
+    tickers_1d = yf.download("GC=F", period="2y", interval="1d", progress=False) # 1d
+    tickers_1wk = yf.download("GC=F", period="2y", interval="1wk", progress=False) # 1wk
+
+    # Store accessible dfs
+    def process_yf(df):
+        if df.empty: return None
+        # Handle MultiIndex if present (common in new yfinance)
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df.xs('GC=F', level=0, axis=1) if 'GC=F' in df.columns.levels[0] else df
         
-        avg_gain = ((avg_gain * (period - 1)) + gain) / period
-        avg_loss = ((avg_loss * (period - 1)) + loss) / period
-        
-    if avg_loss == 0: return 100
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+        # Ensure we have required columns
+        req = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df.columns for col in req): return None
+        return df
 
-def calculate_atr(highs, lows, closes, period=14):
-    if len(closes) < period + 1: return 1.0
-    tr_list = []
-    for i in range(1, len(closes)):
-        h = highs[i]; l = lows[i]; c_prev = closes[i-1]
-        tr = max(h-l, abs(h-c_prev), abs(l-c_prev))
-        tr_list.append(tr)
-        
-    # Smoothed ATR
-    atr = sum(tr_list[:period]) / period
-    for i in range(period, len(tr_list)):
-        atr = ((atr * (period - 1)) + tr_list[i]) / period
-    return atr
+    data_store['1m'] = process_yf(tickers_intraday)
+    data_store['5m'] = process_yf(tickers_5m)
+    data_store['15m'] = process_yf(tickers_15m)
+    data_store['1h'] = process_yf(tickers_1h)
+    data_store['1d'] = process_yf(tickers_1d)
+    data_store['1wk'] = process_yf(tickers_1wk)
 
-def fetch_live_data(interval):
-    """
-    Fetches REAL market data for requested interval and 1H for MTA.
-    """
-    try:
-        yf_interval = interval
-        period = "60d" 
-        
-        if interval == "1h": period = "1y"
-        elif interval == "1d": period = "2y"
+    # Resampling for 2H and 4H
+    if data_store['1h'] is not None:
+        logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+        data_store['2h'] = data_store['1h'].resample('2h').agg(logic).dropna()
+        data_store['4h'] = data_store['1h'].resample('4h').agg(logic).dropna()
 
-        tickers = ["GC=F", "DX-Y.NYB", "^TNX"]
-        
-        # Download data
-        data = yf.download(tickers, period=period, interval=yf_interval, progress=False, group_by='ticker')
-        
-        # Fetch 1H data for MTA if current interval is smaller
-        mta_data = None
-        if yf_interval in ["1m", "5m", "15m"]:
-            mta_data = yf.download("GC=F", period="1y", interval="1h", progress=False)
+    return data_store
 
-        response = {}
-        
-        # Process Gold
-        if "GC=F" in data:
-            df = data["GC=F"].dropna()
-            response["OPENS"] = df['Open'].tolist()
-            response["HIGHS"] = df['High'].tolist()
-            response["LOWS"] = df['Low'].tolist()
-            response["CLOSES"] = df['Close'].tolist()
-            response["VOLUMES"] = df['Volume'].tolist()
+def analyze_timeframe(tf, df):
+    """Generates signal and description for a specific timeframe."""
+    if df is None or len(df) < MIN_HISTORY:
+        return {"timeframe": tf.upper(), "signal": "WAIT", "description": "Insufficient Data", "color": "text-muted"}
 
-        # Process DXY
-        if "DX-Y.NYB" in data:
-            response["DXY_CLOSES"] = data["DX-Y.NYB"]['Close'].dropna().tolist()
-        else:
-            response["DXY_CLOSES"] = []
+    # Run Indicators
+    df = calculate_indicators(df)
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-        # Process Yields (^TNX)
-        if "^TNX" in data:
-            response["YIELD_CLOSES"] = data["^TNX"]['Close'].dropna().tolist()
-        else:
-            response["YIELD_CLOSES"] = []
-
-        # Process MTA (1H Gold)
-        if mta_data is not None and not mta_data.empty:
-            response["MTA_1H_CLOSES"] = mta_data['Close'].dropna().tolist()
-        else:
-            response["MTA_1H_CLOSES"] = []
-
-        return response
-    except Exception as e:
-        print(f"Data Fetch Error: {e}")
-        return None
-
-def detect_liquidity_grab(highs, lows, closes, opens):
-    """
-    Detects stop-runs/liquidity grabs: Wicks that sweep previous highs/lows and reject.
-    """
-    if len(closes) < 5: return "NONE"
-    
-    curr_h = highs[-1]
-    curr_l = lows[-1]
-    curr_c = closes[-1]
-    curr_o = opens[-1]
-    
-    # Previous swing high/low (simple 3-candle)
-    prev_h = max(highs[-4:-1])
-    prev_l = min(lows[-4:-1])
-    
-    # Bearish Grab: Price sweeps prev high then closes back below it
-    if curr_h > prev_h and curr_c < prev_h and curr_c < curr_o:
-        return "BEARISH_GRAB"
-    
-    # Bullish Grab: Price sweeps prev low then closes back above it
-    if curr_l < prev_l and curr_c > prev_l and curr_c > curr_o:
-        return "BULLISH_GRAB"
-        
-    return "NONE"
-
-def calculate_logic(data_pack, session_name, session_vol):
-    """
-    LEVEL-9 ENGINE (MTA + Yield Correlation + Liquidity Grabs)
-    """
-    if not data_pack or "CLOSES" not in data_pack or len(data_pack["CLOSES"]) < 200:
-         return {"signal": "WAIT", "formatted_report": "System Offline", "lock": True}
-    
-    closes = data_pack["CLOSES"]
-    opens = data_pack["OPENS"]
-    highs = data_pack["HIGHS"]
-    lows = data_pack["LOWS"]
-    volumes = data_pack["VOLUMES"]
-    dxy_series = data_pack["DXY_CLOSES"]
-    yield_series = data_pack.get("YIELD_CLOSES", [])
-    mta_1h = data_pack.get("MTA_1H_CLOSES", [])
-    
-    # Current Candle
-    price = closes[-1]
-    
-    # --- A. INSTITUTIONAL TREND (EMA) ---
-    ema200 = calculate_ema(closes, 200)
-    ema50 = calculate_ema(closes, 50)
-    ema21 = calculate_ema(closes, 21)
-    
-    trend = "NEUTRAL"
-    if price > ema200 and ema21 > ema50: trend = "BULLISH"
-    elif price < ema200 and ema21 < ema50: trend = "BEARISH"
-    
-    # --- B. MULTI-TIMEFRAME ALIGNMENT (MTA) ---
-    mta_trend = "NEUTRAL"
-    if len(mta_1h) >= 200:
-        ema200_1h = calculate_ema(mta_1h, 200)
-        if mta_1h[-1] > ema200_1h: mta_trend = "BULLISH"
-        else: mta_trend = "BEARISH"
-    
-    # --- C. VSA & LIQUIDITY ---
-    vol_avg = sum(volumes[-21:-1]) / 20 if len(volumes) > 20 else 1
-    vsa_confirm = volumes[-1] > (vol_avg * 1.5)
-    
-    liq_grab = detect_liquidity_grab(highs, lows, closes, opens)
-    
-    # Expansion
-    body = abs(closes[-1] - opens[-1])
-    ranges = [(h-l) for h, l in zip(highs[-51:-1], lows[-51:-1])]
-    avg_range = sum(ranges) / len(ranges) if ranges else 1
-    is_expansion = body > (avg_range * 1.8)
-    
-    rsi = calculate_rsi(closes, 14)
-    
-    # --- D. CORRELATION (DXY & YIELD) ---
-    lock_reason = None
-    is_locked = False
-    
-    # DXY Shock
-    if len(dxy_series) > 10:
-        d_delta = abs(dxy_series[-1] - dxy_series[-2])
-        if d_delta > 0.15: 
-            is_locked = True
-            lock_reason = "DXY VOLATILITY"
-            
-    # Yield Correlation (Inverse)
-    yield_bias = "NEUTRAL"
-    if len(yield_series) > 10:
-        y_change = yield_series[-1] - yield_series[-5]
-        if y_change > 0.05: yield_bias = "BEARISH" # Yields UP = Gold DOWN
-        elif y_change < -0.05: yield_bias = "BULLISH" # Yields DOWN = Gold UP
-            
-    # --- E. SCORING ENGINE ---
+    # --- SCORING ENGINE ---
     score = 50
-    if trend == "BULLISH": score += 15
-    elif trend == "BEARISH": score -= 15
+    reasons = []
+
+    # 1. Trend (40%)
+    trend_score = 0
+    if last['Close'] > last['EMA200']: trend_score += 10
+    else: trend_score -= 10
     
-    if mta_trend == trend: score += 10 if trend == "BULLISH" else -10
+    if last['EMA21'] > last['EMA50']: 
+        trend_score += 10
+        reasons.append("Bullish Trend")
+    elif last['EMA21'] < last['EMA50']:
+        trend_score -= 10
+        reasons.append("Bearish Trend")
+    else:
+        reasons.append("Trend Neutral")
+
+    score += trend_score
+
+    # 2. Momentum (30%)
+    mom_score = 0
+    # RSI
+    if last['RSI'] > 55: mom_score += 5
+    elif last['RSI'] < 45: mom_score -= 5
     
-    if yield_bias == "BULLISH": score += 10
-    elif yield_bias == "BEARISH": score -= 10
+    # MACD
+    if last['MACD'] > last['Signal_Line']: mom_score += 10; reasons.append("MACD Bullish")
+    else: mom_score -= 10; reasons.append("MACD Bearish")
+
+    score += mom_score
+
+    # 3. Volatility/PA (30%)
+    vol_score = 0
+    # BB Expansion
+    bb_width = last['BB_Upper'] - last['BB_Lower']
+    prev_bb_width = prev['BB_Upper'] - prev['BB_Lower']
+    if bb_width > prev_bb_width * 1.1: reasons.append("Vol Expanding")
     
-    if vsa_confirm:
-        if closes[-1] > opens[-1]: score += 10
-        else: score -= 10
-        
-    if is_expansion:
-        if closes[-1] > opens[-1]: score += 10
-        else: score -= 10
-        
-    if liq_grab == "BULLISH_GRAB": score += 15
-    elif liq_grab == "BEARISH_GRAB": score -= 15
-        
-    if rsi > 58: score += 10
-    elif rsi < 42: score -= 10
-    
-    # Session weight
-    score = 50 + ((score - 50) * session_vol)
-    
-    # --- F. FINAL SIGNAL & EXNESS LEVELS ---
-    buy_prob = max(0, min(100, int(score)))
-    sell_prob = 100 - buy_prob
+    # Price vs BB
+    if last['Close'] > last['BB_Upper']: vol_score += 10
+    elif last['Close'] < last['BB_Lower']: vol_score -= 10
+
+    score += vol_score
+
+    # --- SIGNAL GENERATION ---
     signal = "WAIT"
-    sl = tp = 0.0
-    atr = calculate_atr(highs, lows, closes, 14)
+    color = "text-yellow-500" # Tailwind class concept or CSS var
     
-    if is_locked:
-        signal = f"WAIT ({lock_reason})"
+    if score >= 65:
+        signal = "BUY"
+        color = "signal-buy"
+    elif score <= 35:
+        signal = "SELL"
+        color = "signal-sell"
     else:
-        # High Probability Confluence
-        if buy_prob >= 75 and mta_trend == "BULLISH":
-            signal = "STRONG BUY"
-            sl = price - (2.2 * atr)
-            tp = price + (3.8 * atr) 
-        elif sell_prob >= 75 and mta_trend == "BEARISH":
-            signal = "STRONG SELL"
-            sl = price + (2.2 * atr)
-            tp = price - (3.8 * atr)
-        elif buy_prob >= 65:
-            signal = "BUY"
-            sl = price - (1.6 * atr)
-            tp = price + (2.8 * atr)
-        elif sell_prob >= 65:
-            signal = "SELL"
-            sl = price + (1.6 * atr)
-            tp = price - (2.8 * atr)
-            
-    # --- G. PREDICTIVE FORECAST ---
-    forecast = "NEUTRAL (WAIT)"
-    if signal.startswith("STRONG"):
-        forecast = "INSTITUTIONAL RALLY (CONTINUE)" if "BUY" in signal else "INSTITUTIONAL DUMP (CONTINUE)"
-    elif mta_trend == trend and trend != "NEUTRAL":
-        forecast = "MULTI-TIMEFRAME CONFLUENCE"
-    elif liq_grab != "NONE":
-        forecast = "LIQUIDITY REVERSAL DETECTED"
-    elif "BUY" in signal and yield_bias == "BULLISH":
-        forecast = "YIELD-SUPPORTED UPSIDE"
-    elif "SELL" in signal and yield_bias == "BEARISH":
-        forecast = "YIELD-SUPPORTED DOWNSIDE"
-    elif is_locked:
-        forecast = "STAY OUT (DANGEROUS)"
-    else:
-        forecast = "CONSOLIDATION (WAIT)"
+        signal = "WAIT"
+        color = "signal-wait"
+
+    # Construct Description
+    # "Uptrend strong, EMA21>EMA50, RSI 62"
+    desc_parts = []
+    
+    # Trend Desc
+    if last['Close'] > last['EMA200']: desc_parts.append("Uptrend")
+    else: desc_parts.append("Downtrend")
+    
+    # Key Factors
+    desc_parts.append(f"RSI {int(last['RSI'])}")
+    if last['MACD'] > last['Signal_Line']: desc_parts.append("MACD +")
+    else: desc_parts.append("MACD -")
+
+    # Merge reasons for detail if needed, but keep short for UI
+    final_desc = ", ".join(desc_parts)
 
     return {
+        "timeframe": tf.upper(),
         "signal": signal,
-        "forecast": forecast,
-        "probs": {"buy": buy_prob, "sell": sell_prob},
-        "trend": trend,
-        "mta": mta_trend,
-        "yield_bias": yield_bias,
-        "rsi": round(rsi, 1),
-        "vsa": "BIG MONEY" if vsa_confirm else "NORMAL",
-        "liq_grab": liq_grab,
-        "lock": is_locked,
-        "levels": {
-            "sl": round(sl, 2) if sl != 0 else 0,
-            "tp": round(tp, 2) if tp != 0 else 0
-        },
-        "data": {
-            "gold": round(price, 2),
-            "ema200": round(ema200, 2)
-        }
+        "description": final_desc,
+        "score": score,
+        "raw_signal": color # For UI styling
     }
 
-@app.route('/api/status', methods=['GET'])
-def home():
+@app.route('/api/dashboard', methods=['GET'])
+def dashboard():
     try:
-        tf = request.args.get('interval', '5m')
-        # Map to YFinance supported intervals
-        valid_map = {
-            "1m": "1m", "5m": "5m", "15m": "15m", 
-            "1H": "1h", "2H": "1h", "4H": "1h", "1D": "1d"
-        }
-        yf_tf = valid_map.get(tf, "5m")
+        data_store = fetch_all_timeframes()
+        results = []
         
-        session_name, vol_mult = get_session_profile_dubai()
+        ordered_tfs = ["1m", "5m", "15m", "1h", "2h", "4h", "1d", "1wk"]
         
-        data_pack = fetch_live_data(yf_tf)
-        intel = calculate_logic(data_pack, session_name, vol_mult)
+        for tf in ordered_tfs:
+            df = data_store.get(tf)
+            result = analyze_timeframe(tf, df)
+            results.append(result)
+            
+        session, _ = get_session_profile_dubai()
         
         response = {
             "timestamp": datetime.now().strftime("%H:%M:%S UTC"),
-            "session": {"name": session_name},
-            "engine": intel
+            "session": session,
+            "signals": results
         }
         
         resp = jsonify(response)
         resp.headers['Access-Control-Allow-Origin'] = '*'
         return resp
+
     except Exception as e:
-        return jsonify({"engine": {"signal": "OFFLINE", "forecast": "Server Error", "probs": {"buy":0, "sell":0}, "lock": True}})
+        print(traceback.format_exc())
+        return jsonify({"error": str(e), "signals": []})
+
+@app.route('/api/status', methods=['GET']) # Keep old endpoint for backwards compatibility if needed
+def home():
+    # Redirect logic or simple fallback
+    return jsonify({"message": "Use /api/dashboard for Level-9 Engine"})
 
 if __name__ == "__main__":
     app.run(debug=True)
