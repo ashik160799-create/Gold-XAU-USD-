@@ -430,17 +430,20 @@ def fetch_all_timeframes():
     # Define tasks
     tasks = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        # 1. Gold Tasks (Priority) - Try primary ticker first
-        # We fetch different intervals for Gold
-        tasks['gold_intra'] = executor.submit(fetch_ticker_data, gold_tickers[0], "5d", "1m")
-        tasks['gold_hourly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "60d", "1h")
-        tasks['gold_daily'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2y", "1d")
+        # 1. Gold Tasks (Priority) - Optimized Periods
+        # EMA200 needs ~250 candles to be safe.
+        # 1m: 250m = ~4h. period="1d" is plenty.
+        tasks['gold_intra'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2d", "1m") 
+        # 1h: 250h = ~10d. period="15d" (buffer).
+        tasks['gold_hourly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "15d", "1h")
+        # 1d: 250d. period="1y".
+        tasks['gold_daily'] = executor.submit(fetch_ticker_data, gold_tickers[0], "1y", "1d")
         tasks['gold_weekly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2y", "1wk")
         
-        # 2. Context Tasks
-        tasks['dxy'] = executor.submit(fetch_ticker_data, dxy_ticker, "60d", "1h")
-        tasks['oil'] = executor.submit(fetch_ticker_data, oil_ticker, "60d", "1h")
-        tasks['yield'] = executor.submit(fetch_ticker_data, yield_ticker, "60d", "1h")
+        # 2. Context Tasks - Minimal context
+        tasks['dxy'] = executor.submit(fetch_ticker_data, dxy_ticker, "15d", "1h")
+        tasks['oil'] = executor.submit(fetch_ticker_data, oil_ticker, "15d", "1h")
+        tasks['yield'] = executor.submit(fetch_ticker_data, yield_ticker, "15d", "1h")
         
         # Collect Results
         # Gold Processing
