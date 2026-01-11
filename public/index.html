@@ -285,7 +285,8 @@
             document.getElementById('prob-sell-text').innerText = sellP + '%';
             document.getElementById('bar-sell').style.width = sellP + '%';
 
-            document.getElementById('regime-text').innerText = `${data.engine.regime} (USD Imp: ${data.engine.regime_data.usd_weight})`;
+            const lockStatus = data.engine.lock ? "🔒 LOCKED" : "🔓 OPEN";
+            document.getElementById('regime-text').innerText = `${data.engine.regime} ${lockStatus}`;
 
             const dxyD = data.engine.data.dxy_delta;
             const dxyEl = document.getElementById('dxy-delta');
