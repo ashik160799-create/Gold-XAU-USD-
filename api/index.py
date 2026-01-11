@@ -69,7 +69,61 @@ def calculate_indicators(df):
     df['Delta'] = df['Close'].diff()
     df['DeltaDelta'] = df['Delta'].diff()
 
+    # 5. ADX (Trend Strength)
+    plus_dm = df['High'].diff()
+    minus_dm = df['Low'].diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm > 0] = 0
+    
+    tr1 = df['High'] - df['Low']
+    tr2 = abs(df['High'] - df['Close'].shift(1))
+    tr3 = abs(df['Low'] - df['Close'].shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(14).mean()
+    
+    plus_di = 100 * (plus_dm.ewm(alpha=1/14).mean() / atr)
+    minus_di = abs(100 * (minus_dm.ewm(alpha=1/14).mean() / atr))
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    df['ADX'] = dx.ewm(alpha=1/14).mean()
+
     return df
+
+def identify_candlestick_pattern(df):
+    """Identifies basic patterns: Engulfing, Hammer, Star, Doji."""
+    if len(df) < 3: return "None"
+    curr = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    body = abs(curr['Close'] - curr['Open'])
+    upper_wick = curr['High'] - max(curr['Close'], curr['Open'])
+    lower_wick = min(curr['Close'], curr['Open']) - curr['Low']
+    total_len = curr['High'] - curr['Low']
+    
+    pattern = "None"
+    
+    # Doji
+    if total_len > 0 and body <= total_len * 0.1:
+        pattern = "Doji"
+    
+    # Hammer (Bullish) / Hanging Man
+    elif lower_wick > 2 * body and upper_wick < body:
+        pattern = "Hammer" # Bullish if context right
+        
+    # Shooting Star (Bearish) / Inverted Hammer
+    elif upper_wick > 2 * body and lower_wick < body:
+        pattern = "Shooting Star" # Bearish if context right
+        
+    # Engulfing
+    prev_body = abs(prev['Close'] - prev['Open'])
+    if body > prev_body:
+        if curr['Close'] > curr['Open'] and prev['Close'] < prev['Open']:
+             if curr['Close'] > prev['Open'] and curr['Open'] < prev['Close']: 
+                 pattern = "Bullish Engulfing"
+        elif curr['Close'] < curr['Open'] and prev['Close'] > prev['Open']:
+             if curr['Close'] < prev['Open'] and curr['Open'] > prev['Close']:
+                 pattern = "Bearish Engulfing"
+                 
+    return pattern
 
 # --- HELPERS ---
 
@@ -149,7 +203,7 @@ def detect_wick_anomaly(df):
 
 def analyze_timeframe(tf, df, data_store):
     """
-    Level-9+ Power AI Analysis Engine.
+    Level-9+ Power AI Analysis Engine - Strict Scoring & WAIT Logic.
     """
     if df is None or df.empty or len(df) < 50:
          return {
@@ -169,128 +223,184 @@ def analyze_timeframe(tf, df, data_store):
     df = calculate_indicators(df)
     last = df.iloc[-1]
     atr = last['ATR'] if not pd.isna(last['ATR']) else 0
+    adx = last['ADX'] if not pd.isna(last['ADX']) else 0
     
     # External Context
     dxy_df = data_store.get('dxy_1h')
     yield_df = data_store.get('yield_1h')
+    oil_df = data_store.get('oil_1h') # Added oil check
     
-    score = 0
+    # --- SCORING ENGINE (Base 50%) ---
+    score = 50
     reasons = []
     
-    # 1. TREND DETECTION (EMA 20 vs 50)
-    trend = "SIDEWAYS"
-    if last['EMA20'] > last['EMA50']:
-        trend = "UPTREND"
-        score += 30
-        reasons.append("EMA 20>50 (Uptrend)")
-    elif last['EMA20'] < last['EMA50']:
-        trend = "DOWNTREND"
-        score -= 30
-        reasons.append("EMA 20<50 (Downtrend)")
-    else:
-        reasons.append("EMA Mixed (Sideways)")
-
-    # 2. MOMENTUM CONFIRMATION (RSI)
-    if last['RSI'] > 55:
-        score += 25
-        reasons.append("RSI > 55 (Bullish)")
-    elif last['RSI'] < 45:
-        score -= 25
-        reasons.append("RSI < 45 (Bearish)")
-
-    # 3. ACCELERATION LOGIC (Delta of Delta)
-    if not pd.isna(last['DeltaDelta']):
-        if trend == "UPTREND" and last['DeltaDelta'] > 0:
-            score += 15
-            reasons.append("Trend Accelerating (+)")
-        elif trend == "DOWNTREND" and last['DeltaDelta'] < 0:
-            score -= 15
-            reasons.append("Trend Accelerating (-)")
-
-    # 4. VOLATILITY CHECK (ATR Spike)
-    body = abs(last['Close'] - last['Open'])
-    if body > 3 * atr and atr > 0:
-        score = 0 # Force Wait
-        reasons.append("ATR Spike (Volatility Trap)")
-
-    # 5. STOP-HUNT DETECTION
-    is_wick, wick_type = detect_wick_anomaly(df)
-    if is_wick:
-        reasons.append(f"Stop-Hunt: {wick_type}")
-        if "BULLISH" in wick_type: score += 10
-        if "BEARISH" in wick_type: score -= 10
+    # 1. TREND ANALYSIS (+15% / -15%)
+    # Full Alignment: EMA 5 > 20 > 50 > 200
+    trend_score = 0
+    ema_bullish = last['EMA5'] > last['EMA20'] and last['EMA20'] > last['EMA50'] and last['EMA50'] > last['EMA200']
+    ema_bearish = last['EMA5'] < last['EMA20'] and last['EMA20'] < last['EMA50'] and last['EMA50'] < last['EMA200']
     
-    # 6. CORRELATION CHECKS (DXY, US10Y)
-    correlation_risk = False
-    if dxy_df is not None:
-        dxy_last = dxy_df.iloc[-1]
-        dxy_up = dxy_last['Close'] > dxy_last['Open']
-        gold_up = last['Close'] > last['Open']
-        if dxy_up == gold_up: # Gold & DXY should move opposite
-            correlation_risk = True
-            reasons.append("DXY Correlation Risk")
+    if ema_bullish:
+        trend_score += 15
+        reasons.append("Trend Aligned Bullish")
+    elif ema_bearish:
+        trend_score -= 15
+        reasons.append("Trend Aligned Bearish")
+    else:
+        # Partial Trend
+        if last['EMA5'] > last['EMA20']: trend_score += 5
+        elif last['EMA5'] < last['EMA20']: trend_score -= 5
+        reasons.append("Trend Mixed")
+    
+    score += trend_score
 
+    # 2. MOMENTUM CONFIRMATION (+10% / -10%)
+    momentum_score = 0
+    rsi = last['RSI']
+    macd_hist = last['MACD_Hist']
+    
+    if rsi > 55:
+        momentum_score += 5
+        if macd_hist > 0: momentum_score += 5
+        reasons.append("Momentum Bullish")
+    elif rsi < 45:
+        momentum_score -= 5
+        if macd_hist < 0: momentum_score -= 5
+        reasons.append("Momentum Bearish")
+    else:
+        reasons.append("RSI Neutral")
+        
+    score += momentum_score
+
+    # 3. VOLATILITY & RISK (+5% / WAIT)
+    # ATR Spike Check
+    avg_atr = df['ATR'].rolling(50).mean().iloc[-1]
+    if atr > avg_atr * 1.5:
+        reasons.append("High Volatility (ATR Spike)")
+        # Do not add +5, maybe slight penalty or just 0
+    else:
+        score += 5 # Stable volatility
+        
+    # VWAP Check
+    if last['Close'] > last['VWAP']: score += 2
+    else: score -= 2
+
+    # 4. CORRELATION CHECK (+10% / -10% / WAIT)
+    # Gold vs DXY/Yields (Inverse)
+    corr_score = 0
+    aligned_correlations = 0
+    
+    gold_up = last['Close'] > last['Open']
+    
+    if dxy_df is not None:
+        d_last = dxy_df.iloc[-1]
+        d_up = d_last['Close'] > d_last['Open']
+        if d_up != gold_up: 
+            corr_score += 5
+            aligned_correlations += 1
+        else:
+            reasons.append("DXY Correlation Risk")
+            
     if yield_df is not None:
         y_last = yield_df.iloc[-1]
         y_up = y_last['Close'] > y_last['Open']
-        if y_up == gold_up: # Yields & Gold usually move opposite
-            correlation_risk = True
+        if y_up != gold_up:
+            corr_score += 5
+            aligned_correlations += 1
+        else:
             reasons.append("Yield Correlation Risk")
 
-    if oil_df is not None:
-        o_last = oil_df.iloc[-1]
-        o_up = o_last['Close'] > o_last['Open']
-        if o_up != gold_up: # Gold & Oil often move together
-            # Minor risk, don't set correlation_risk=True alone, but add reason
-            reasons.append("Oil Divergence")
-            score *= 0.9
+    score += corr_score
 
-    if correlation_risk:
-        score *= 0.6 # Reduce confidence significantly
-
-    # 7. HTF CONFIRMATION
-    htf_trend = get_htf_trend(data_store, tf)
-    if score > 0 and htf_trend == "BULLISH": score += 10
-    elif score < 0 and htf_trend == "BEARISH": score -= 10
-    elif score != 0 and htf_trend == "NEUTRAL": score *= 0.8
-    elif (score > 0 and htf_trend == "BEARISH") or (score < 0 and htf_trend == "BULLISH"):
-        score *= 0.5
-        reasons.append("HTF Conflict")
-
-    # --- FINAL DECISION ---
-    display_score = 50 + (score / 1.5)
-    display_score = max(0, min(100, int(display_score)))
+    # 5. STOP-HUNT DETECTION (-20%)
+    is_wick, wick_type = detect_wick_anomaly(df)
+    if is_wick:
+        score -= 20 # Significant penalty
+        reasons.append(f"Stop-Hunt Detected ({wick_type})") 
+        # Usually forces WAIT unless signal is super strong reversal
     
+    # 6. CANDLESTICK PATTERNS (±5-10%)
+    pattern = identify_candlestick_pattern(df)
+    if pattern != "None":
+        reasons.append(f"Pattern: {pattern}")
+        if pattern in ["Bullish Engulfing", "Hammer"]:
+            score += 10
+        elif pattern in ["Bearish Engulfing", "Shooting Star"]:
+            score -= 10
+        elif pattern == "Doji":
+            score = 50 # Neutralize
+            reasons.append("Doji (Indecision)")
+
+    # 7. NEWS FILTER (Placeholder -10% if needed)
+    # Assumed manual or time based. 
+    # For now, if "High Volatility" was flagged, that covers some news risk.
+    
+    # --- FINAL DECISION LOGIC ---
+    
+    # Force WAIT conditions
+    force_wait = False
+    
+    # 1. Trend vs Momentum Conflict
+    if (trend_score > 0 and momentum_score < 0) or (trend_score < 0 and momentum_score > 0):
+        reasons.append("Trend/Momentum Conflict")
+        force_wait = True
+        
+    # 2. ADX Weak Trend
+    if adx < 20: 
+        reasons.append("Weak Trend (ADX < 20)")
+        # Weak trend doesn't always mean WAIT (could be ranging strategy), but for trend following it's bad.
+        # We will reduce confidence, maybe not force wait if oscillating.
+        score = 50 + (score - 50) * 0.5 # Dampen score
+        
+    # 3. Abnormal Correlation (Both DXY and Yields against us)
+    if dxy_df is not None and yield_df is not None:
+         # If both flagged conflicts
+         if "DXY Correlation Risk" in reasons and "Yield Correlation Risk" in reasons:
+             reasons.append("Major Correlation Breakdown")
+             # force_wait = True # Strict mode? Let's reduce score heavily instead
+             score = 50 
+
+    # Cap Score
+    score = max(0, min(100, int(score)))
+
+    # Determine Action
     action = "WAIT"
-    if display_score >= 65: action = "BUY"
-    elif display_score <= 35: action = "SELL"
+    if not force_wait:
+        if score >= 70: action = "BUY" # Higher threshold for strong confirm
+        elif score <= 30: action = "SELL"
     
-    # Prediction for upcoming candle
-    next_candle = "WAIT"
-    if action == "BUY" and display_score > 70: next_candle = "BUY"
-    elif action == "SELL" and display_score < 30: next_candle = "SELL"
-    elif action != "WAIT": next_candle = action
+    if "Stop-Hunt" in str(reasons) and abs(score - 50) < 30:
+        action = "WAIT" # Stop hunt needs strong reversal confirm
 
-    # Trade Guidance
+    # Next Candle Prediction
+    next_candle = "WAIT"
+    if action == "BUY":
+        if momentum_score > 0 and pattern in ["Bullish Engulfing", "Hammer"]:
+             next_candle = "BUY"
+    elif action == "SELL":
+        if momentum_score < 0 and pattern in ["Bearish Engulfing", "Shooting Star"]:
+             next_candle = "SELL"
+             
+    # Trade Guide Setup
     trade_guide = {"entry": "-", "sl": "-", "tp": "-"}
     if action != "WAIT" and atr > 0:
-        current_price = last['Close']
+        cp = last['Close']
         if action == "BUY":
-            sl = current_price - (1.5 * atr)
-            tp = current_price + (2.0 * atr)
+            sl = cp - (1.5 * atr)
+            tp = cp + (2.0 * atr)
         else:
-            sl = current_price + (1.5 * atr)
-            tp = current_price - (2.0 * atr)
-        trade_guide = {"entry": f"{current_price:.2f}", "sl": f"{sl:.2f}", "tp": f"{tp:.2f}"}
+            sl = cp + (1.5 * atr)
+            tp = cp - (2.0 * atr)
+        trade_guide = {"entry": f"{cp:.2f}", "sl": f"{sl:.2f}", "tp": f"{tp:.2f}"}
 
     final_reason = ", ".join(reasons)
-
+    
     return {
         "timeframe": tf.upper(),
         "action": action,
-        "confidence": f"{display_score}%",
+        "confidence": f"{score}%",
         "reason": final_reason,
-        "score": display_score,
+        "score": score,
         "signal": action,
         "description": final_reason,
         "trade_guide": trade_guide,
