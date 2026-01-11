@@ -11,7 +11,7 @@
     ],
     "routes": [
         {
-            "src": "/api/status",
+            "src": "/api/(.*)",
             "dest": "/api/index.py"
         },
         {
