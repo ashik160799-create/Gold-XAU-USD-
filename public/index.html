@@ -55,6 +55,32 @@
             color: var(--text-muted);
         }
 
+        /* Timeframe Buttons */
+        .tf-container {
+            display: flex;
+            justify-content: center;
+            gap: 5px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tf-btn {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .tf-btn.active {
+            background-color: #1f6feb;
+            color: white;
+            border-color: #1f6feb;
+        }
+
         /* Signal Box */
         .signal-box {
             text-align: center;
@@ -86,7 +112,7 @@
             color: var(--accent-yellow);
         }
 
-        /* Execution Levels (New for Level 6) */
+        /* Execution Levels */
         .levels-container {
             display: flex;
             gap: 10px;
@@ -141,13 +167,8 @@
             font-weight: bold;
         }
 
-        .bullish {
-            color: #3fb950;
-        }
-
-        .bearish {
-            color: #f85149;
-        }
+        .bullish { color: #3fb950; }
+        .bearish { color: #f85149; }
 
         .loader {
             text-align: center;
@@ -166,15 +187,21 @@
             <div id="session-tag" class="session-tag">Loading...</div>
         </div>
 
-        <div style="text-align: center; margin-bottom: 10px; font-size: 0.9rem; color: var(--text-muted);">CURRENT SIGNAL</div>
-        <div id="signal-box" class="signal-box signal-wait">
-            WAIT
+        <!-- Timeframes -->
+        <div class="tf-container">
+            <button class="tf-btn" onclick="setTF('1m')">1M</button>
+            <button class="tf-btn active" onclick="setTF('5m')">5M</button>
+            <button class="tf-btn" onclick="setTF('15m')">15M</button>
+            <button class="tf-btn" onclick="setTF('1H')">1H</button>
+            <button class="tf-btn" onclick="setTF('2H')">2H</button>
+            <button class="tf-btn" onclick="setTF('4H')">4H</button>
         </div>
 
+        <div style="text-align: center; margin-bottom: 10px; font-size: 0.9rem; color: var(--text-muted);">CURRENT SIGNAL</div>
+        <div id="signal-box" class="signal-box signal-wait">WAIT</div>
+
         <div style="text-align: center; margin-bottom: 10px; font-size: 0.9rem; color: var(--text-muted);">NEXT TIMEFRAME FORECAST</div>
-        <div id="forecast-box" class="signal-box signal-wait" style="font-size: 1.8rem; padding: 15px; border-style: dashed;">
-            WAIT
-        </div>
+        <div id="forecast-box" class="signal-box signal-wait" style="font-size: 1.8rem; padding: 15px; border-style: dashed;">WAIT</div>
 
         <!-- Exness Calculation Levels -->
         <div class="levels-container">
@@ -220,13 +247,23 @@
             Market Data: Yahoo Finance (Institutional Feed) <br>
             Last Update: <span id="last-update">...</span>
         </div>
-
     </div>
 
     <script>
+        let currentTF = '5m';
+
+        async function setTF(tf) {
+            currentTF = tf;
+            document.querySelectorAll('.tf-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.innerText === tf.toUpperCase()) btn.classList.add('active');
+            });
+            await fetchData();
+        }
+
         async function fetchData() {
             try {
-                const response = await fetch('/api/status?interval=5m');
+                const response = await fetch(`/api/status?interval=${currentTF}`);
                 const data = await response.json();
                 updateUI(data);
             } catch (error) {
@@ -241,45 +278,19 @@
             // 1. Session
             document.getElementById('session-tag').innerText = `🌍 ${data.session.name}`;
 
-            // 2. Signal Box
+            // 2. Signals
             const box = document.getElementById('signal-box');
             box.innerText = eng.signal;
-            box.className = 'signal-box';
+            box.className = 'signal-box ' + (eng.signal === 'BUY' || eng.signal.includes('STRONG BUY') ? 'signal-buy' : (eng.signal === 'SELL' || eng.signal.includes('STRONG SELL') ? 'signal-sell' : 'signal-wait'));
 
             const fBox = document.getElementById('forecast-box');
             fBox.innerText = eng.forecast;
-            fBox.className = 'signal-box';
-
-            if (eng.signal === "BUY") {
-                box.classList.add('signal-buy');
-            } else if (eng.signal === "SELL") {
-                box.classList.add('signal-sell');
-            } else {
-                box.classList.add('signal-wait');
-            }
-
-            if (eng.forecast === "BUY") {
-                fBox.classList.add('signal-buy');
-                fBox.style.borderStyle = "dashed";
-            } else if (eng.forecast === "SELL") {
-                fBox.classList.add('signal-sell');
-                fBox.style.borderStyle = "dashed";
-            } else {
-                fBox.classList.add('signal-wait');
-                fBox.style.borderStyle = "dashed";
-            }
+            fBox.className = 'signal-box ' + (eng.forecast.includes('BUY') ? 'signal-buy' : (eng.forecast.includes('SELL') ? 'signal-sell' : 'signal-wait'));
+            fBox.style.borderStyle = "dashed";
 
             // 3. Exness Levels
-            const tpEl = document.getElementById('tp-price');
-            const slEl = document.getElementById('sl-price');
-
-            if (eng.levels && eng.levels.tp > 0) {
-                tpEl.innerText = eng.levels.tp;
-                slEl.innerText = eng.levels.sl;
-            } else {
-                tpEl.innerText = "---";
-                slEl.innerText = "---";
-            }
+            document.getElementById('tp-price').innerText = eng.levels.tp > 0 ? eng.levels.tp : "---";
+            document.getElementById('sl-price').innerText = eng.levels.sl > 0 ? eng.levels.sl : "---";
 
             // 4. Technicals
             const trendEl = document.getElementById('trend-val');
@@ -288,28 +299,20 @@
 
             const rsiEl = document.getElementById('rsi-val');
             rsiEl.innerText = eng.rsi;
-            // RSI Color
-            if (eng.rsi > 58) rsiEl.className = 'tech-value bullish';
-            else if (eng.rsi < 42) rsiEl.className = 'tech-value bearish';
-            else rsiEl.className = 'tech-value';
+            rsiEl.className = 'tech-value ' + (eng.rsi > 58 ? 'bullish' : (eng.rsi < 42 ? 'bearish' : ''));
 
             document.getElementById('buy-conf').innerText = eng.probs.buy + '%';
             document.getElementById('sell-conf').innerText = eng.probs.sell + '%';
-
-            // 5. Level 7+ Institutional Indicators
-            const vsaEl = document.getElementById('vsa-val');
-            vsaEl.innerText = eng.vsa;
-            vsaEl.className = 'tech-value ' + (eng.vsa.includes('BIG') ? 'bullish' : '');
-
-            const expEl = document.getElementById('expansion-val');
-            expEl.innerText = eng.expansion;
-            expEl.className = 'tech-value ' + (eng.expansion === 'HIGH' ? 'bullish' : '');
+            document.getElementById('vsa-val').innerText = eng.vsa;
+            document.getElementById('vsa-val').className = 'tech-value ' + (eng.vsa.includes('BIG') ? 'bullish' : '');
+            document.getElementById('expansion-val').innerText = eng.expansion;
+            document.getElementById('expansion-val').className = 'tech-value ' + (eng.expansion === 'HIGH' ? 'bullish' : '');
 
             document.getElementById('last-update').innerText = data.timestamp;
         }
 
         fetchData();
-        setInterval(fetchData, 2000);
+        setInterval(fetchData, 5000);
     </script>
 </body>
 
