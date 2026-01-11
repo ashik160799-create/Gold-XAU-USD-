@@ -78,39 +78,36 @@ def fetch_all_timeframes():
     # Use XAUUSD=X (Spot Gold) instead of futures for better Forex alignment
     ticker = "XAUUSD=X"
     
-    # Group 1: Intraday
-    tickers_intraday = yf.download(ticker, period="5d", interval="1m", progress=False) # 1m
-    tickers_5m = yf.download(ticker, period="5d", interval="5m", progress=False) # 5m
-    tickers_15m = yf.download(ticker, period="5d", interval="15m", progress=False) # 15m
+    # Group 1: Intraday (We'll resample 5m/15m from 1m for better data consistency)
+    tickers_intraday = yf.download(ticker, period="7d", interval="1m", progress=False, timeout=15) # 1m
     
     # Group 2: Hourly/Swing (Source for 2H/4H)
-    tickers_1h = yf.download(ticker, period="1y", interval="1h", progress=False) # 1h
+    tickers_1h = yf.download(ticker, period="1y", interval="1h", progress=False, timeout=15) # 1h
     
     # Group 3: Daily/Weekly
-    tickers_1d = yf.download(ticker, period="2y", interval="1d", progress=False) # 1d
-    tickers_1wk = yf.download(ticker, period="2y", interval="1wk", progress=False) # 1wk
+    tickers_1d = yf.download(ticker, period="2y", interval="1d", progress=False, timeout=15) # 1d
+    tickers_1wk = yf.download(ticker, period="2y", interval="1wk", progress=False, timeout=15) # 1wk
     
     # Store accessible dfs
-    def process_yf(df):
-        if df is None or df.empty: return None
+    def process_yf(df, name="unknown"):
+        if df is None or df.empty: 
+            print(f"DEBUG: {name} fetch returned empty data")
+            return None
         
         # Handle MultiIndex if present (common in new yfinance 0.2.x+)
         if isinstance(df.columns, pd.MultiIndex):
-            # Check if ticker is in level 1 (common) or level 0
-            try:
-                if ticker in df.columns.levels[1]: # Columns: (Price, Ticker)
-                     df = df.xs(ticker, level=1, axis=1)
-                elif ticker in df.columns.levels[0]: # Columns: (Ticker, Price)
-                     df = df.xs(ticker, level=0, axis=1)
-            except:
-                pass # structure might be simple
+            ticker_found = False
+            for level in range(df.columns.nlevels):
+                if ticker in df.columns.get_level_values(level):
+                     df = df.xs(ticker, level=level, axis=1)
+                     ticker_found = True
+                     break
             
             # If still MultiIndex, fallback to level 0
-            if isinstance(df.columns, pd.MultiIndex):
+            if not ticker_found and isinstance(df.columns, pd.MultiIndex):
                  df.columns = df.columns.get_level_values(0)
 
         # Ensure we have required columns
-        # sometimes yfinance returns 'Adj Close' but not 'Close' or vice versa
         if 'Close' not in df.columns and 'Adj Close' in df.columns:
             df['Close'] = df['Adj Close']
             
@@ -122,22 +119,40 @@ def fetch_all_timeframes():
                 for c in df.columns:
                     if str(c).lower() == r.lower():
                         found_cols[r] = c
+                        break
             
             if len(found_cols) == len(req):
                 df = df.rename(columns={v: k for k, v in found_cols.items()})
             else:
+                print(f"DEBUG: {name} missing columns: {list(df.columns)}")
                 return None
         
         # Drop any NaN rows that might break calculations
         df = df.dropna(subset=['Close'])
+        print(f"DEBUG: {name} processed: {len(df)} rows")
         return df
 
-    data_store['1m'] = process_yf(tickers_intraday)
-    data_store['5m'] = process_yf(tickers_5m)
-    data_store['15m'] = process_yf(tickers_15m)
-    data_store['1h'] = process_yf(tickers_1h)
-    data_store['1d'] = process_yf(tickers_1d)
-    data_store['1wk'] = process_yf(tickers_1wk)
+    data_store['1m'] = process_yf(tickers_intraday, "1m")
+    
+    # Resampling Logic
+    logic = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+    
+    if data_store['1m'] is not None:
+        data_store['5m'] = data_store['1m'].resample('5min').agg(logic).dropna()
+        data_store['15m'] = data_store['1m'].resample('15min').agg(logic).dropna()
+        print(f"DEBUG: 5m resampled: {len(data_store['5m'])} rows")
+        print(f"DEBUG: 15m resampled: {len(data_store['15m'])} rows")
+    else:
+        # Fallback to direct fetch if 1m failed
+        print("DEBUG: 1m failed, attempting direct 5m/15m fetch")
+        df_5m = yf.download(ticker, period="5d", interval="5m", progress=False, timeout=15)
+        df_15m = yf.download(ticker, period="5d", interval="15m", progress=False, timeout=15)
+        data_store['5m'] = process_yf(df_5m, "5m")
+        data_store['15m'] = process_yf(df_15m, "15m")
+
+    data_store['1h'] = process_yf(tickers_1h, "1h")
+    data_store['1d'] = process_yf(tickers_1d, "1d")
+    data_store['1wk'] = process_yf(tickers_1wk, "1wk")
 
     # Resampling for 2H and 4H
     if data_store['1h'] is not None:
@@ -150,15 +165,21 @@ def fetch_all_timeframes():
 def analyze_timeframe(tf, df):
     """Generates signal and description for a specific timeframe."""
     if df is None:
-         return {"timeframe": tf.upper(), "signal": "WAIT", "description": "Data Fetch Failed (Empty)", "color": "text-muted"}
+         return {"timeframe": tf.upper(), "signal": "WAIT", "description": "Data Feed Offline", "color": "text-muted"}
          
-    if len(df) < 5: # bare minimum
-         return {"timeframe": tf.upper(), "signal": "WAIT", "description": f"Insufficient Data (Rows: {len(df)})", "color": "text-muted"}
+    row_count = len(df)
+    if row_count < 2: # Absolute minimum to even have a 'prev'
+         return {"timeframe": tf.upper(), "signal": "WAIT", "description": f"Insufficient Data ({row_count} bars)", "color": "text-muted"}
 
     # Run Indicators
     df = calculate_indicators(df)
     last = df.iloc[-1]
     prev = df.iloc[-2]
+
+    # Check if essential indicators are calculated
+    # Some indicators like EMA200 need more data
+    if pd.isna(last['EMA21']) or pd.isna(last['RSI']):
+         return {"timeframe": tf.upper(), "signal": "WAIT", "description": f"Warm-up Phase ({row_count} bars)", "color": "text-muted"}
 
     # --- SCORING ENGINE ---
     score = 50
