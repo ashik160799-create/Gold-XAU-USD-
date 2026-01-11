@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gold Level-7+ (Pure Institutional)</title>
+    <title>Gold Level-9 (Multi-Timeframe Institutional)</title>
     <style>
         :root {
             --bg-color: #0d1117;
@@ -222,6 +222,14 @@
                 <span id="trend-val" class="tech-value">...</span>
             </div>
             <div class="tech-box">
+                <span class="tech-label">MTA (1H Trend)</span>
+                <span id="mta-val" class="tech-value">...</span>
+            </div>
+            <div class="tech-box">
+                <span class="tech-label">Yield Bias</span>
+                <span id="yield-val" class="tech-value">...</span>
+            </div>
+            <div class="tech-box">
                 <span class="tech-label">RSI (14)</span>
                 <span id="rsi-val" class="tech-value">...</span>
             </div>
@@ -230,8 +238,8 @@
                 <span id="vsa-val" class="tech-value">...</span>
             </div>
             <div class="tech-box">
-                <span class="tech-label">Expansion</span>
-                <span id="expansion-val" class="tech-value">...</span>
+                <span class="tech-label">Liquidity Grab</span>
+                <span id="liq-val" class="tech-value">...</span>
             </div>
             <div class="tech-box">
                 <span class="tech-label">Buy Conf</span>
@@ -281,11 +289,11 @@
             // 2. Signals
             const box = document.getElementById('signal-box');
             box.innerText = eng.signal;
-            box.className = 'signal-box ' + (eng.signal === 'BUY' || eng.signal.includes('STRONG BUY') ? 'signal-buy' : (eng.signal === 'SELL' || eng.signal.includes('STRONG SELL') ? 'signal-sell' : 'signal-wait'));
+            box.className = 'signal-box ' + (eng.signal.includes('BUY') ? 'signal-buy' : (eng.signal.includes('SELL') ? 'signal-sell' : 'signal-wait'));
 
             const fBox = document.getElementById('forecast-box');
             fBox.innerText = eng.forecast;
-            fBox.className = 'signal-box ' + (eng.forecast.includes('BUY') ? 'signal-buy' : (eng.forecast.includes('SELL') ? 'signal-sell' : 'signal-wait'));
+            fBox.className = 'signal-box ' + (eng.forecast.includes('BUY') || eng.forecast.includes('UPSIDE') || eng.forecast.includes('RALLY') ? 'signal-buy' : (eng.forecast.includes('SELL') || eng.forecast.includes('DOWNSIDE') || eng.forecast.includes('DUMP') ? 'signal-sell' : 'signal-wait'));
             fBox.style.borderStyle = "dashed";
 
             // 3. Exness Levels
@@ -297,16 +305,26 @@
             trendEl.innerText = eng.trend;
             trendEl.className = 'tech-value ' + (eng.trend === 'BULLISH' ? 'bullish' : (eng.trend === 'BEARISH' ? 'bearish' : ''));
 
+            const mtaEl = document.getElementById('mta-val');
+            mtaEl.innerText = eng.mta;
+            mtaEl.className = 'tech-value ' + (eng.mta === 'BULLISH' ? 'bullish' : (eng.mta === 'BEARISH' ? 'bearish' : ''));
+
+            const yieldEl = document.getElementById('yield-val');
+            yieldEl.innerText = eng.yield_bias;
+            yieldEl.className = 'tech-value ' + (eng.yield_bias === 'BULLISH' ? 'bullish' : (eng.yield_bias === 'BEARISH' ? 'bearish' : ''));
+
             const rsiEl = document.getElementById('rsi-val');
             rsiEl.innerText = eng.rsi;
             rsiEl.className = 'tech-value ' + (eng.rsi > 58 ? 'bullish' : (eng.rsi < 42 ? 'bearish' : ''));
 
             document.getElementById('buy-conf').innerText = eng.probs.buy + '%';
             document.getElementById('sell-conf').innerText = eng.probs.sell + '%';
+            
             document.getElementById('vsa-val').innerText = eng.vsa;
             document.getElementById('vsa-val').className = 'tech-value ' + (eng.vsa.includes('BIG') ? 'bullish' : '');
-            document.getElementById('expansion-val').innerText = eng.expansion;
-            document.getElementById('expansion-val').className = 'tech-value ' + (eng.expansion === 'HIGH' ? 'bullish' : '');
+            
+            document.getElementById('liq-val').innerText = eng.liq_grab === 'NONE' ? 'NORMAL' : eng.liq_grab.replace('_', ' ');
+            document.getElementById('liq-val').className = 'tech-value ' + (eng.liq_grab.includes('BULLISH') ? 'bullish' : (eng.liq_grab.includes('BEARISH') ? 'bearish' : ''));
 
             document.getElementById('last-update').innerText = data.timestamp;
         }
