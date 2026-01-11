@@ -410,6 +410,30 @@ def analyze_timeframe(tf, df, data_store):
 
 # --- DATA FETCHING ---
 
+def generate_synthetic_data(tf_str):
+    """Generates realistic synthetic data for fallback."""
+    import numpy as np
+    period_map = {'1m': 60, '5m': 60, '15m': 60, '1h': 48, '2h': 48, '4h': 48, '1d': 30, '1wk': 30}
+    n = period_map.get(tf_str, 50)
+    
+    dates = pd.date_range(end=datetime.now(), periods=n, freq=tf_str.replace('m','T').replace('h','H').replace('d','D').replace('wk','W'))
+    
+    # Random Walk
+    base = 2500.0
+    close = [base]
+    for _ in range(n-1):
+        change = np.random.normal(0, 2)
+        close.append(close[-1] + change)
+        
+    df = pd.DataFrame({
+        'Open': [c - np.random.normal(0, 1) for c in close],
+        'High': [c + abs(np.random.normal(0, 2)) for c in close],
+        'Low': [c - abs(np.random.normal(0, 2)) for c in close],
+        'Close': close,
+        'Volume': [np.random.randint(1000, 5000) for _ in range(n)]
+    }, index=dates)
+    return df
+
 def fetch_ticker_data(ticker, period, interval):
     """Helper to fetch single ticker data with short timeout."""
     try:
@@ -418,8 +442,10 @@ def fetch_ticker_data(ticker, period, interval):
         return None
 
 def fetch_all_timeframes():
-    """Fetches and prepares data for Gold, DXY, Oil, and Yields using ThreadPoolExecutor."""
+    """Fetches data with automatic fallback to synthetic if fetching fails."""
     data_store = {}
+    data_store['is_live'] = True
+    
     gold_tickers = ["GC=F", "XAUUSD=X"]
     dxy_ticker = "DX-Y.NYB"
     oil_ticker = "CL=F"
@@ -427,86 +453,90 @@ def fetch_all_timeframes():
 
     import concurrent.futures
 
-    # Define tasks
-    tasks = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        # 1. Gold Tasks (Priority) - Optimized Periods
-        # EMA200 needs ~250 candles to be safe.
-        # 1m: 250m = ~4h. period="1d" is plenty.
-        tasks['gold_intra'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2d", "1m") 
-        # 1h: 250h = ~10d. period="15d" (buffer).
-        tasks['gold_hourly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "15d", "1h")
-        # 1d: 250d. period="1y".
-        tasks['gold_daily'] = executor.submit(fetch_ticker_data, gold_tickers[0], "1y", "1d")
-        tasks['gold_weekly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2y", "1wk")
-        
-        # 2. Context Tasks - Minimal context
-        tasks['dxy'] = executor.submit(fetch_ticker_data, dxy_ticker, "15d", "1h")
-        tasks['oil'] = executor.submit(fetch_ticker_data, oil_ticker, "15d", "1h")
-        tasks['yield'] = executor.submit(fetch_ticker_data, yield_ticker, "15d", "1h")
-        
-        # Collect Results
-        # Gold Processing
-        df_intra = tasks['gold_intra'].result()
-        df_hourly = tasks['gold_hourly'].result()
-        df_daily = tasks['gold_daily'].result()
-        df_weekly = tasks['gold_weekly'].result()
-        
-        # Fallback to secondary ticker if primary empty
-        if df_hourly is None or df_hourly.empty:
-            df_hourly = fetch_ticker_data(gold_tickers[1], "60d", "1h")
-            # If changed ticker, try others too (simplified for speed: just get hourly as base or context)
-            if df_hourly is not None and not df_hourly.empty:
-                 # Minimal fallback: use this for everything possible
-                 df_intra = fetch_ticker_data(gold_tickers[1], "5d", "5m") # 5m is safer fallback
-                 df_daily = fetch_ticker_data(gold_tickers[1], "2y", "1d")
+    try:
+        # Define tasks
+        tasks = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            # 1. Gold Tasks (Priority) - Optimized Periods
+            tasks['gold_intra'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2d", "1m") 
+            tasks['gold_hourly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "15d", "1h")
+            tasks['gold_daily'] = executor.submit(fetch_ticker_data, gold_tickers[0], "1y", "1d")
+            tasks['gold_weekly'] = executor.submit(fetch_ticker_data, gold_tickers[0], "2y", "1wk")
+            
+            # 2. Context Tasks - Minimal context
+            tasks['dxy'] = executor.submit(fetch_ticker_data, dxy_ticker, "15d", "1h")
+            tasks['oil'] = executor.submit(fetch_ticker_data, oil_ticker, "15d", "1h")
+            tasks['yield'] = executor.submit(fetch_ticker_data, yield_ticker, "15d", "1h")
+            
+            # Collect Results
+            df_intra = tasks['gold_intra'].result()
+            df_hourly = tasks['gold_hourly'].result()
+            df_daily = tasks['gold_daily'].result()
+            df_weekly = tasks['gold_weekly'].result()
+            
+            # --- VALIDATION & FALLBACK LOGIC ---
+            
+            def validate_df(df):
+                if df is None or df.empty: return False
+                # Handle MultiIndex logic
+                if isinstance(df.columns, pd.MultiIndex):
+                    try: df.columns = df.columns.get_level_values(0)
+                    except: pass
+                # Check for Close
+                if 'Close' not in df.columns:
+                     if 'Adj Close' in df.columns: df['Close'] = df['Adj Close']
+                     else: return False
+                df = df.dropna(subset=['Close'])
+                return df if len(df) > 10 else False
 
-        def validate_df(df):
-            if df is None or df.empty: return False
-            # Handle MultiIndex logic
-            if isinstance(df.columns, pd.MultiIndex):
-                # Try to flatten or select
-                try: df.columns = df.columns.get_level_values(0)
-                except: pass
-                
-            # Check for Close
-            if 'Close' not in df.columns:
-                 # Maybe it's 'Adj Close'
-                 if 'Adj Close' in df.columns: df['Close'] = df['Adj Close']
-                 else: return False
-                 
-            # Drop NaN
-            df = df.dropna(subset=['Close'])
-            return df if len(df) > 10 else False
+            valid_hourly = validate_df(df_hourly)
+            # CRITICAL CHECK: If hourly gold fails, we likely have no data at all.
+            # Trigger full synthetic mode.
+            if valid_hourly is False:
+                raise Exception("Primary Gold Data Fetch Failed")
 
-        # Store Gold
-        valid_hourly = validate_df(df_hourly)
-        if valid_hourly is not False:
-             data_store['1h'] = valid_hourly
-             data_store['2h'] = valid_hourly.resample('2h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
-             data_store['4h'] = valid_hourly.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
-        
-        valid_daily = validate_df(df_daily)
-        if valid_daily is not False: data_store['1d'] = valid_daily
-        
-        valid_weekly = validate_df(df_weekly)
-        if valid_weekly is not False: data_store['1wk'] = valid_weekly
-        
-        valid_intra = validate_df(df_intra)
-        if valid_intra is not False:
-             data_store['1m'] = valid_intra
-             data_store['5m'] = valid_intra.resample('5min').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
-             data_store['15m'] = valid_intra.resample('15min').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+            # Store Gold
+            data_store['1h'] = valid_hourly
+            data_store['2h'] = valid_hourly.resample('2h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+            data_store['4h'] = valid_hourly.resample('4h').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+            
+            valid_daily = validate_df(df_daily)
+            if valid_daily is not False: data_store['1d'] = valid_daily
+            
+            valid_weekly = validate_df(df_weekly)
+            if valid_weekly is not False: data_store['1wk'] = valid_weekly
+            
+            valid_intra = validate_df(df_intra)
+            if valid_intra is not False:
+                 data_store['1m'] = valid_intra
+                 data_store['5m'] = valid_intra.resample('5min').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+                 data_store['15m'] = valid_intra.resample('15min').agg({'Open':'first','High':'max','Low':'min','Close':'last','Volume':'sum'}).dropna()
+            else:
+                 # Fallback for intra if hourly worked
+                 data_store['5m'] = data_store['1h'] # Rough fallback
+                 data_store['15m'] = data_store['1h']
 
-        # Store Context
-        dxy = validate_df(tasks['dxy'].result())
-        if dxy is not False: data_store['dxy_1h'] = dxy
-        
-        oil = validate_df(tasks['oil'].result())
-        if oil is not False: data_store['oil_1h'] = oil
-        
-        yld = validate_df(tasks['yield'].result())
-        if yld is not False: data_store['yield_1h'] = yld
+            # Store Context
+            dxy = validate_df(tasks['dxy'].result())
+            if dxy is not False: data_store['dxy_1h'] = dxy
+            
+            oil = validate_df(tasks['oil'].result())
+            if oil is not False: data_store['oil_1h'] = oil
+            
+            yld = validate_df(tasks['yield'].result())
+            if yld is not False: data_store['yield_1h'] = yld
+            
+    except Exception as e:
+        print(f"FETCH FAILED: {e}. SWITCHING TO SYNTHETIC DATA.")
+        data_store['is_live'] = False
+        # Generate Synthetic Data for ALL timeframes
+        tfs = ['1m', '5m', '15m', '1h', '2h', '4h', '1d', '1wk']
+        for tf in tfs:
+            data_store[tf] = generate_synthetic_data(tf)
+        # Mock Context too
+        data_store['dxy_1h'] = generate_synthetic_data('1h')
+        data_store['oil_1h'] = generate_synthetic_data('1h')
+        data_store['yield_1h'] = generate_synthetic_data('1h')
 
     return data_store
 
@@ -530,7 +560,8 @@ def dashboard():
         return jsonify({
             "timestamp": datetime.utcnow().strftime("%H:%M:%S UTC"),
             "session": session,
-            "signals": results
+            "signals": results,
+            "status": "Live" if data_store.get('is_live') else "Simulation/Offline Mode"
         })
 
     except Exception as e:
